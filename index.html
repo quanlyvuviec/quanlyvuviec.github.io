@@ -157,6 +157,9 @@
     input[type="text"][pattern="\d{2}/\d{2}/\d{4}"] {
       position: relative;
     }
+    .fixed-inset-0 {
+      z-index: 1000 !important;
+    }
   </style>
 </head>
 <body>
@@ -861,6 +864,7 @@
       const prosecutionDateObjRef = useRef(null);
       const custodyDecisionDateRef = useRef(null);
       const detentionDecisionDateRef = useRef(null);
+      const flatpickrInstances = useRef({});
       useEffect(() => {
         setPreviousValues({ ...objectData });
       }, []);
@@ -890,98 +894,132 @@
         }
       }, [objectData.detentionExpirationDate, objectData.detentionExtensionCount, objectData.crimeType, caseData.status]);
       useEffect(() => {
-        flatpickr(birthDateRef.current, {
-          dateFormat: "d/m/Y",
-          defaultDate: formatDateToVietnamese(objectData.birthDate),
-          onChange: ([date]) => {
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            const dateStr = `${day}/${month}/${year}`;
-            handleObjectInputChange({ target: { name: 'birthDate', value: dateStr } });
-          }
-        });
-        flatpickr(issueDateRef.current, {
-          dateFormat: "d/m/Y",
-          defaultDate: formatDateToVietnamese(objectData.issueDate),
-          onChange: ([date]) => {
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            const dateStr = `${day}/${month}/${year}`;
-            handleObjectInputChange({ target: { name: 'issueDate', value: dateStr } });
-          }
-        });
+        if (birthDateRef.current && !flatpickrInstances.current.birthDate) {
+          flatpickrInstances.current.birthDate = flatpickr(birthDateRef.current, {
+            dateFormat: "d/m/Y",
+            defaultDate: formatDateToVietnamese(objectData.birthDate),
+            onChange: ([date]) => {
+              if (date) {
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const dateStr = `${day}/${month}/${year}`;
+                handleObjectInputChange({ target: { name: 'birthDate', value: dateStr } });
+              }
+            }
+          });
+        }
+        if (issueDateRef.current && !flatpickrInstances.current.issueDate) {
+          flatpickrInstances.current.issueDate = flatpickr(issueDateRef.current, {
+            dateFormat: "d/m/Y",
+            defaultDate: formatDateToVietnamese(objectData.issueDate),
+            onChange: ([date]) => {
+              if (date) {
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const dateStr = `${day}/${month}/${year}`;
+                handleObjectInputChange({ target: { name: 'issueDate', value: dateStr } });
+              }
+            }
+          });
+        }
         if (objectData.handlingMethod === 'xử phạt hành chính') {
-          flatpickr(reportDateRef.current, {
-            dateFormat: "d/m/Y",
-            defaultDate: formatDateToVietnamese(objectData.reportDate),
-            onChange: ([date]) => {
-              const year = date.getFullYear();
-              const month = String(date.getMonth() + 1).padStart(2, '0');
-              const day = String(date.getDate()).padStart(2, '0');
-              const dateStr = `${day}/${month}/${year}`;
-              handleObjectInputChange({ target: { name: 'reportDate', value: dateStr } });
-            }
-          });
-          flatpickr(decisionDateRef.current, {
-            dateFormat: "d/m/Y",
-            defaultDate: formatDateToVietnamese(objectData.decisionDate),
-            onChange: ([date]) => {
-              const year = date.getFullYear();
-              const month = String(date.getMonth() + 1).padStart(2, '0');
-              const day = String(date.getDate()).padStart(2, '0');
-              const dateStr = `${day}/${month}/${year}`;
-              handleObjectInputChange({ target: { name: 'decisionDate', value: dateStr } });
-            }
-          });
+          if (reportDateRef.current && !flatpickrInstances.current.reportDate) {
+            flatpickrInstances.current.reportDate = flatpickr(reportDateRef.current, {
+              dateFormat: "d/m/Y",
+              defaultDate: formatDateToVietnamese(objectData.reportDate),
+              onChange: ([date]) => {
+                if (date) {
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  const dateStr = `${day}/${month}/${year}`;
+                  handleObjectInputChange({ target: { name: 'reportDate', value: dateStr } });
+                }
+              }
+            });
+          }
+          if (decisionDateRef.current && !flatpickrInstances.current.decisionDate) {
+            flatpickrInstances.current.decisionDate = flatpickr(decisionDateRef.current, {
+              dateFormat: "d/m/Y",
+              defaultDate: formatDateToVietnamese(objectData.decisionDate),
+              onChange: ([date]) => {
+                if (date) {
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  const dateStr = `${day}/${month}/${year}`;
+                  handleObjectInputChange({ target: { name: 'decisionDate', value: dateStr } });
+                }
+              }
+            });
+          }
         }
         if (objectData.handlingMethod === 'khởi tố bị can') {
-          flatpickr(prosecutionDateObjRef.current, {
-            dateFormat: "d/m/Y",
-            defaultDate: formatDateToVietnamese(objectData.prosecutionDateObj),
-            onChange: ([date]) => {
-              const year = date.getFullYear();
-              const month = String(date.getMonth() + 1).padStart(2, '0');
-              const day = String(date.getDate()).padStart(2, '0');
-              const dateStr = `${day}/${month}/${year}`;
-              handleObjectInputChange({ target: { name: 'prosecutionDateObj', value: dateStr } });
-            }
-          });
-          flatpickr(custodyDecisionDateRef.current, {
-            dateFormat: "d/m/Y",
-            defaultDate: formatDateToVietnamese(objectData.custodyDecisionDate),
-            onChange: ([date]) => {
-              const year = date.getFullYear();
-              const month = String(date.getMonth() + 1).padStart(2, '0');
-              const day = String(date.getDate()).padStart(2, '0');
-              const dateStr = `${day}/${month}/${year}`;
-              handleObjectInputChange({ target: { name: 'custodyDecisionDate', value: dateStr } });
-            }
-          });
-          flatpickr(detentionDecisionDateRef.current, {
-            dateFormat: "d/m/Y",
-            defaultDate: formatDateToVietnamese(objectData.detentionDecisionDate),
-            onChange: ([date]) => {
-              const year = date.getFullYear();
-              const month = String(date.getMonth() + 1).padStart(2, '0');
-              const day = String(date.getDate()).padStart(2, '0');
-              const dateStr = `${day}/${month}/${year}`;
-              handleObjectInputChange({ target: { name: 'detentionDecisionDate', value: dateStr } });
-            }
-          });
+          if (prosecutionDateObjRef.current && !flatpickrInstances.current.prosecutionDateObj) {
+            flatpickrInstances.current.prosecutionDateObj = flatpickr(prosecutionDateObjRef.current, {
+              dateFormat: "d/m/Y",
+              defaultDate: formatDateToVietnamese(objectData.prosecutionDateObj),
+              onChange: ([date]) => {
+                if (date) {
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  const dateStr = `${day}/${month}/${year}`;
+                  handleObjectInputChange({ target: { name: 'prosecutionDateObj', value: dateStr } });
+                }
+              }
+            });
+          }
+          if (custodyDecisionDateRef.current && !flatpickrInstances.current.custodyDecisionDate) {
+            flatpickrInstances.current.custodyDecisionDate = flatpickr(custodyDecisionDateRef.current, {
+              dateFormat: "d/m/Y",
+              defaultDate: formatDateToVietnamese(objectData.custodyDecisionDate),
+              onChange: ([date]) => {
+                if (date) {
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  const dateStr = `${day}/${month}/${year}`;
+                  handleObjectInputChange({ target: { name: 'custodyDecisionDate', value: dateStr } });
+                }
+              }
+            });
+          }
+          if (detentionDecisionDateRef.current && !flatpickrInstances.current.detentionDecisionDate) {
+            flatpickrInstances.current.detentionDecisionDate = flatpickr(detentionDecisionDateRef.current, {
+              dateFormat: "d/m/Y",
+              defaultDate: formatDateToVietnamese(objectData.detentionDecisionDate),
+              onChange: ([date]) => {
+                if (date) {
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  const dateStr = `${day}/${month}/${year}`;
+                  handleObjectInputChange({ target: { name: 'detentionDecisionDate', value: dateStr } });
+                }
+              }
+            });
+          }
         }
-      }, [objectData.handlingMethod, objectData.birthDate, objectData.issueDate, objectData.reportDate, objectData.decisionDate, objectData.prosecutionDateObj, objectData.custodyDecisionDate, objectData.detentionDecisionDate]);
+        return () => {
+          Object.values(flatpickrInstances.current).forEach(instance => instance?.destroy());
+          flatpickrInstances.current = {};
+        };
+      }, [objectData.handlingMethod]);
       const handleObjectInputChange = (e) => {
         const { name, value } = e.target;
-        if (name === 'behavior') {
-          const selectedBehaviors = value.split(',').map(b => b.trim()).filter(b => b);
-          setObjectData({ ...objectData, [name]: selectedBehaviors });
-        } else if (['birthDate', 'issueDate', 'reportDate', 'decisionDate', 'prosecutionDateObj', 'custodyDecisionDate', 'detentionDecisionDate'].includes(name)) {
-          setObjectData({ ...objectData, [name]: parseDateFromVietnamese(value) });
-        } else {
-          setObjectData({ ...objectData, [name]: value });
-        }
+        setObjectData(prev => {
+          if (name === 'behavior') {
+            const selectedBehaviors = value.split(',').map(b => b.trim()).filter(b => b);
+            return { ...prev, [name]: selectedBehaviors };
+          } else if (['birthDate', 'issueDate', 'reportDate', 'decisionDate', 'prosecutionDateObj', 'custodyDecisionDate', 'detentionDecisionDate'].includes(name)) {
+            return { ...prev, [name]: parseDateFromVietnamese(value) };
+          } else {
+            return { ...prev, [name]: value };
+          }
+        });
       };
       const handleCurrentBehaviorChange = (e) => {
         const value = e.target.value;
@@ -993,7 +1031,7 @@
         );
       };
       const addBehavior = () => {
-        if (currentBehavior && caseTypesList.includes(currentBehavior) && (!objectData.behavior || !objectData.behavior.includes(currentBehavior))) {
+        if (currentBehavior && caseTypesList.includes(currentBehavior) && (!objectData.behavior || !objectData.behavior.includes(currentBehavior)) ) {
           setObjectData({ ...objectData, behavior: [...(objectData.behavior || []), currentBehavior] });
           setCurrentBehavior('');
           setFilteredBehaviors(caseTypesList.filter(ct => !objectData.behavior || !objectData.behavior.includes(ct)));
@@ -1831,6 +1869,7 @@
       const penaltyDateRef = useRef(null);
       const transferDateRef = useRef(null);
       const reportDateRef = useRef(null);
+      const flatpickrInstances = useRef({});
       useEffect(() => {
         if (caseData.investigationResult === 'khởi tố vụ án' && caseData.prosecutionDate && caseData.crimeType) {
           const totalMonths = calculateTotalInvestigationMonths(caseData.crimeType, caseData.extensionCount);
@@ -1853,100 +1892,130 @@
         }
       }, [caseData.expirationDate, caseData.extensionCount, caseData.crimeType, caseData.status]);
       useEffect(() => {
-        flatpickr(dateReceivedRef.current, {
-          dateFormat: "d/m/Y",
-          defaultDate: formatDateToVietnamese(caseData.dateReceived),
-          onChange: ([date]) => {
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            const dateStr = `${day}/${month}/${year}`;
-            handleInputChange({ target: { name: 'dateReceived', value: dateStr } });
-          },
-          disableMobile: true
-        });
+        if (dateReceivedRef.current && !flatpickrInstances.current.dateReceived) {
+          flatpickrInstances.current.dateReceived = flatpickr(dateReceivedRef.current, {
+            dateFormat: "d/m/Y",
+            defaultDate: formatDateToVietnamese(caseData.dateReceived),
+            onChange: ([date]) => {
+              if (date) {
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const dateStr = `${day}/${month}/${year}`;
+                handleInputChange({ target: { name: 'dateReceived', value: dateStr } });
+              }
+            },
+            disableMobile: true
+          });
+        }
         if (caseData.investigationResult === 'khởi tố vụ án') {
-          flatpickr(investigationConclusionDateRef.current, {
-            dateFormat: "d/m/Y",
-            defaultDate: formatDateToVietnamese(caseData.investigationConclusionDate),
-            onChange: ([date]) => {
-              const year = date.getFullYear();
-              const month = String(date.getMonth() + 1).padStart(2, '0');
-              const day = String(date.getDate()).padStart(2, '0');
-              const dateStr = `${day}/${month}/${year}`;
-              handleInputChange({ target: { name: 'investigationConclusionDate', value: dateStr } });
-            }
-          });
-          flatpickr(prosecutionDateRef.current, {
-            dateFormat: "d/m/Y",
-            defaultDate: formatDateToVietnamese(caseData.prosecutionDate),
-            onChange: ([date]) => {
-              const year = date.getFullYear();
-              const month = String(date.getMonth() + 1).padStart(2, '0');
-              const day = String(date.getDate()).padStart(2, '0');
-              const dateStr = `${day}/${month}/${year}`;
-              handleInputChange({ target: { name: 'prosecutionDate', value: dateStr } });
-            }
-          });
+          if (investigationConclusionDateRef.current && !flatpickrInstances.current.investigationConclusionDate) {
+            flatpickrInstances.current.investigationConclusionDate = flatpickr(investigationConclusionDateRef.current, {
+              dateFormat: "d/m/Y",
+              defaultDate: formatDateToVietnamese(caseData.investigationConclusionDate),
+              onChange: ([date]) => {
+                if (date) {
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  const dateStr = `${day}/${month}/${year}`;
+                  handleInputChange({ target: { name: 'investigationConclusionDate', value: dateStr } });
+                }
+              }
+            });
+          }
+          if (prosecutionDateRef.current && !flatpickrInstances.current.prosecutionDate) {
+            flatpickrInstances.current.prosecutionDate = flatpickr(prosecutionDateRef.current, {
+              dateFormat: "d/m/Y",
+              defaultDate: formatDateToVietnamese(caseData.prosecutionDate),
+              onChange: ([date]) => {
+                if (date) {
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  const dateStr = `${day}/${month}/${year}`;
+                  handleInputChange({ target: { name: 'prosecutionDate', value: dateStr } });
+                }
+              }
+            });
+          }
         }
         if (caseData.investigationResult === 'xử phạt hành chính') {
-          flatpickr(penaltyDateRef.current, {
-            dateFormat: "d/m/Y",
-            defaultDate: formatDateToVietnamese(caseData.penaltyDate),
-            onChange: ([date]) => {
-              const year = date.getFullYear();
-              const month = String(date.getMonth() + 1).padStart(2, '0');
-              const day = String(date.getDate()).padStart(2, '0');
-              const dateStr = `${day}/${month}/${year}`;
-              handleInputChange({ target: { name: 'penaltyDate', value: dateStr } });
-            }
-          });
+          if (penaltyDateRef.current && !flatpickrInstances.current.penaltyDate) {
+            flatpickrInstances.current.penaltyDate = flatpickr(penaltyDateRef.current, {
+              dateFormat: "d/m/Y",
+              defaultDate: formatDateToVietnamese(caseData.penaltyDate),
+              onChange: ([date]) => {
+                if (date) {
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  const dateStr = `${day}/${month}/${year}`;
+                  handleInputChange({ target: { name: 'penaltyDate', value: dateStr } });
+                }
+              }
+            });
+          }
         }
         if (caseData.investigationResult === 'tin báo') {
-          flatpickr(reportDateRef.current, {
-            dateFormat: "d/m/Y",
-            defaultDate: formatDateToVietnamese(caseData.reportDate),
-            onChange: ([date]) => {
-              const year = date.getFullYear();
-              const month = String(date.getMonth() + 1).padStart(2, '0');
-              const day = String(date.getDate()).padStart(2, '0');
-              const dateStr = `${day}/${month}/${year}`;
-              handleInputChange({ target: { name: 'reportDate', value: dateStr } });
-            }
-          });
+          if (reportDateRef.current && !flatpickrInstances.current.reportDate) {
+            flatpickrInstances.current.reportDate = flatpickr(reportDateRef.current, {
+              dateFormat: "d/m/Y",
+              defaultDate: formatDateToVietnamese(caseData.reportDate),
+              onChange: ([date]) => {
+                if (date) {
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  const dateStr = `${day}/${month}/${year}`;
+                  handleInputChange({ target: { name: 'reportDate', value: dateStr } });
+                }
+              }
+            });
+          }
         }
         if (caseData.investigationResult === 'Chuyển hồ sơ') {
-          flatpickr(transferDateRef.current, {
-            dateFormat: "d/m/Y",
-            defaultDate: formatDateToVietnamese(caseData.transferDate),
-            onChange: ([date]) => {
-              const year = date.getFullYear();
-              const month = String(date.getMonth() + 1).padStart(2, '0');
-              const day = String(date.getDate()).padStart(2, '0');
-              const dateStr = `${day}/${month}/${year}`;
-              handleInputChange({ target: { name: 'transferDate', value: dateStr } });
-            }
-          });
+          if (transferDateRef.current && !flatpickrInstances.current.transferDate) {
+            flatpickrInstances.current.transferDate = flatpickr(transferDateRef.current, {
+              dateFormat: "d/m/Y",
+              defaultDate: formatDateToVietnamese(caseData.transferDate),
+              onChange: ([date]) => {
+                if (date) {
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  const dateStr = `${day}/${month}/${year}`;
+                  handleInputChange({ target: { name: 'transferDate', value: dateStr } });
+                }
+              }
+            });
+          }
         }
-      }, [caseData.investigationResult, caseData.dateReceived, caseData.investigationConclusionDate, caseData.prosecutionDate, caseData.penaltyDate, caseData.transferDate, caseData.reportDate]);
+        return () => {
+          Object.values(flatpickrInstances.current).forEach(instance => instance?.destroy());
+          flatpickrInstances.current = {};
+        };
+      }, [caseData.investigationResult]);
       const handleInputChange = (e) => {
         const { name, value } = e.target;
-        let newCaseData = { ...caseData };
-        if (name === 'type') {
-          setTypeInput(value);
-          const selectedTypes = value.split(',').map(t => t.trim()).filter(t => t);
-          newCaseData = { ...caseData, [name]: selectedTypes };
-        } else if (name === 'reportDate') {
-          newCaseData = { ...caseData, [name]: parseDateFromVietnamese(value) };
-          if (!newCaseData.expirationDate) {
-            newCaseData.expirationDate = addMonthsToDate(parseDateFromVietnamese(value), 4);
+        setCaseData(prev => {
+          let newCaseData = { ...prev };
+          if (name === 'type') {
+            setTypeInput(value);
+            const selectedTypes = value.split(',').map(t => t.trim()).filter(t => t);
+            newCaseData = { ...prev, [name]: selectedTypes };
+          } else if (name === 'reportDate') {
+            newCaseData = { ...prev, [name]: parseDateFromVietnamese(value) };
+            if (!newCaseData.expirationDate) {
+              newCaseData.expirationDate = addMonthsToDate(parseDateFromVietnamese(value), 4);
+            }
+          } else if (['dateReceived', 'investigationConclusionDate', 'prosecutionDate', 'penaltyDate', 'transferDate'].includes(name)) {
+            newCaseData = { ...prev, [name]: parseDateFromVietnamese(value) };
+          } else {
+            newCaseData = { ...prev, [name]: value };
           }
-        } else if (['dateReceived', 'investigationConclusionDate', 'prosecutionDate', 'penaltyDate', 'transferDate'].includes(name)) {
-          newCaseData = { ...caseData, [name]: parseDateFromVietnamese(value) };
-        } else {
-          newCaseData = { ...caseData, [name]: value };
-        }
-        setCaseData(newCaseData);
+          return newCaseData;
+        });
       };
       const handleCurrentTypeChange = (e) => {
         const value = e.target.value;
@@ -1999,15 +2068,15 @@
           decisionDate: '',
           prosecutionDateObj: '',
           prosecutionDecisionObj: '',
-          custodyDecisionDate: '',
-          custodyDecisionNumber: '',
-          custodyExtensionCount: '0',
-          custodyExpirationDate: '',
           detentionDecisionDate: '',
           detentionDecisionNumber: '',
-          detentionExtensionCount: '0',
-          detentionExpirationDate: '',
+          custodyDecisionDate: '',
+          custodyDecisionNumber: '',
           crimeType: '',
+          custodyExtensionCount: '0',
+          detentionExtensionCount: '0',
+          custodyExpirationDate: '',
+          detentionExpirationDate: '',
           photo: ''
         });
         setShowObjectForm(true);
@@ -2019,8 +2088,9 @@
         setShowObjectForm(true);
       };
       const handleDeleteConfirm = (index) => {
+        console.log('handleDeleteConfirm called with index:', index);
         setDeleteIndex(index);
-        setShowConfirm(true);
+        setTimeout(() => setShowConfirm(true), 0);
       };
       const handleSubmitCase = (e) => {
         e.preventDefault();
@@ -2488,7 +2558,7 @@
                           Chỉnh sửa
                         </button>
                         <button
-                          className="bg-red-500 text-white px-2 py-1 rounded active:scale-95 active:opacity-75 transition-transform action-button"
+                          className="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded active:scale-95 active:opacity-75 transition-transform duration-200 ease-in-out action-button"
                           onClick={() => handleDeleteConfirm(index)}
                           disabled={!isEditing}
                         >
@@ -2957,8 +3027,13 @@
         setExportFilter(e.target.value);
       };
       const handleSubmitExport = () => {
+        console.log('Exporting with filter:', exportFilter, 'caseId:', filterCaseId, 'start:', filterStartDate, 'end:', filterEndDate);
         const error = exportToExcel(cases, exportFilter, filterCaseId, filterStartDate, filterEndDate);
-        if (error) setErrorMessage(error);
+        if (error) {
+          setErrorMessage(error);
+        } else {
+          setSuccessMessage('Xuất dữ liệu thành công.');
+        }
         setShowExportFilter(false);
       };
       const checkWarning = (obj) => {
@@ -3037,13 +3112,16 @@
         setSuccessMessage('Dữ liệu đã được lưu thành công.');
       };
       const handleDelete = () => {
+        console.log('Deleting object at index:', deleteIndex, 'from tempObjects:', tempObjects);
         setUndoData({ type: 'object', data: tempObjects[deleteIndex], index: deleteIndex });
         const updatedObjects = tempObjects.filter((_, i) => i !== deleteIndex);
-        setTempObjects(updatedObjects);
+        setTempObjects([...updatedObjects]);
         setShowConfirm(false);
         setDeleteIndex(null);
+        console.log('Updated tempObjects:', updatedObjects);
       };
       const handleDeleteCase = () => {
+        console.log('Deleting case with id:', deleteCaseId);
         const deletedCase = cases.find(c => c.id === deleteCaseId);
         setUndoData({ type: 'case', data: deletedCase });
         setCases(cases.filter(c => c.id !== deleteCaseId));
@@ -3054,7 +3132,7 @@
         if (undoData && undoData.type === 'object') {
           const updatedObjects = [...tempObjects];
           updatedObjects.splice(undoData.index, 0, undoData.data);
-          setTempObjects(updatedObjects);
+          setTempObjects([...updatedObjects]);
           setUndoData(null);
         }
       };
@@ -3065,8 +3143,9 @@
         }
       };
       const handleDeleteCaseConfirm = (id) => {
+        console.log('Confirming delete case with id:', id);
         setDeleteCaseId(id);
-        setShowConfirm(true);
+        setTimeout(() => setShowConfirm(true), 0);
       };
       const handleEditCase = (c) => {
         console.log('Editing case:', c);
@@ -3910,7 +3989,7 @@
                                     Chỉnh Sửa
                                   </button>
                                   <button
-                                    className="bg-red-500 text-white px-2 py-1 rounded active:scale-95 active:opacity-75 transition-transform action-button"
+                                    className="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded active:scale-95 active:opacity-75 transition-transform duration-200 ease-in-out action-button"
                                     onClick={() => handleDeleteCaseConfirm(c.id)}
                                   >
                                     Xóa
@@ -3997,7 +4076,7 @@
                                   Chỉnh Sửa
                                 </button>
                                 <button
-                                  className="bg-red-500 text-white px-2 py-1 rounded active:scale-95 active:opacity-75 transition-transform action-button"
+                                  className="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded active:scale-95 active:opacity-75 transition-transform duration-200 ease-in-out action-button"
                                   onClick={() => handleDeleteCaseConfirm(c.id)}
                                 >
                                   Xóa
@@ -4052,7 +4131,7 @@
                   </div>
                 )}
                 {showConfirm && (
-                  <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50">
+                  <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 fixed-inset-0">
                     <div className="bg-white p-4 rounded shadow">
                       <p>Bạn có muốn xóa {deleteCaseId ? 'vụ việc' : 'đối tượng'}?</p>
                       <div className="mt-4">
