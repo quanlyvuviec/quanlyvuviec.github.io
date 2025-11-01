@@ -2087,11 +2087,15 @@
         setEditingIndex(index);
         setShowObjectForm(true);
       };
-      const handleDeleteConfirm = (index) => {
-        console.log('handleDeleteConfirm called with index:', index);
-        setDeleteIndex(index);
-        setTimeout(() => setShowConfirm(true), 0);
-      };
+     const handleDeleteConfirm = (index) => {
+  console.log('handleDeleteConfirm called with index:', index);
+  if (window.confirm('Bạn có chắc chắn muốn xóa đối tượng này?')) {
+    // Xóa trực tiếp
+    const updatedObjects = tempObjects.filter((_, i) => i !== index);
+    setTempObjects(updatedObjects);
+    setSuccessMessage('Đã xóa đối tượng thành công');
+  }
+};
       const handleSubmitCase = (e) => {
         e.preventDefault();
         console.log('Submitting case:', caseData);
@@ -3111,15 +3115,16 @@
         setShowObjectForm(false);
         setSuccessMessage('Dữ liệu đã được lưu thành công.');
       };
-      const handleDelete = () => {
-        console.log('Deleting object at index:', deleteIndex, 'from tempObjects:', tempObjects);
-        setUndoData({ type: 'object', data: tempObjects[deleteIndex], index: deleteIndex });
-        const updatedObjects = tempObjects.filter((_, i) => i !== deleteIndex);
-        setTempObjects([...updatedObjects]);
-        setShowConfirm(false);
-        setDeleteIndex(null);
-        console.log('Updated tempObjects:', updatedObjects);
-      };
+     const handleDelete = () => {
+  console.log('Deleting object at index:', deleteIndex, 'from tempObjects:', tempObjects);
+  setUndoData({ type: 'object', data: tempObjects[deleteIndex], index: deleteIndex });
+  const updatedObjects = tempObjects.filter((_, i) => i !== deleteIndex);
+  setTempObjects(updatedObjects);
+  setCaseData(prev => ({ ...prev, objects: updatedObjects }));
+  setShowConfirm(false);
+  setDeleteIndex(null);
+  console.log('Updated tempObjects:', updatedObjects);
+};
       const handleDeleteCase = () => {
         console.log('Deleting case with id:', deleteCaseId);
         const deletedCase = cases.find(c => c.id === deleteCaseId);
