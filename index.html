@@ -13,7 +13,7 @@
   <script src="./libs/docx.min.js" defer></script>
   <script src="./libs/FileSaver.min.js" defer></script>
   <script src="./libs/xlsx.full.min.js" defer></script>
-  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script src="./libs/flatpickr.min.js" defer></script>
   <style>
     .fixed-width-name { width: 200px; min-width: 200px; }
     .fixed-width-birth { width: 120px; min-width: 120px; }
@@ -569,7 +569,7 @@
                 'Quốc tịch': obj.nationality || '',
                 'Dân tộc': obj.ethnicity || '',
                 'Tôn giáo': obj.religion || '',
-                'Số CMND/CCCD': obj.idNumber || '',
+                'Số CMND/CCCD/CC': obj.idNumber || '',
                 'Cấp ngày': DateUtils.formatToVietnamese(obj.issueDate) || '',
                 'Nơi cấp': obj.issuePlace || '',
                 'Trình độ học vấn': obj.education || '',
@@ -1598,13 +1598,13 @@ function backupCases(cases) {
             
             <div className="flex items-center">
               <div className="flex-1">
-                <label className="block mb-1 font-medium">Số CMND/Thẻ CCCD/Hộ chiếu</label>
+                <label className="block mb-1 font-medium">Số CMND/Thẻ CCCD/Thẻ CC/Hộ chiếu</label>
                 <input
                   type="text"
                   name="idNumber"
                   value={objectData.idNumber || ''}
                   onChange={handleObjectInputChange}
-                  placeholder="Nhập số CMND/CCCD/Hộ chiếu"
+                  placeholder="Nhập số CMND/CCCD/CC/Hộ chiếu"
                   className="border p-2 rounded w-full"
                 />
               </div>
@@ -2885,7 +2885,7 @@ function backupCases(cases) {
                     <th className="border p-2 fixed-width-stt">STT</th>
                     <th className="border p-2 fixed-width-name">Họ tên</th>
                     <th className="border p-2 fixed-width-birth">Sinh ngày</th>
-                    <th className="border p-2">Số CMND/CCCD</th>
+                    <th className="border p-2">Số CMND/CCCD/CC</th>
                     <th className="border p-2 fixed-width-address">Nơi thường trú</th>
                     <th className="border p-2">Mối quan hệ</th>
                     <th className="border p-2">Hình thức xử lý</th>
@@ -3685,7 +3685,7 @@ function backupCases(cases) {
                 }),
                 new Paragraph({
                   children: [
-                    new TextRun({ text: 'Số CMND/Thẻ CCCD/Hộ chiếu: ', font: { name: 'Times New Roman', fallback: 'Arial' }, size: 28, bold: true }),
+                    new TextRun({ text: 'Số CMND/Thẻ CCCD/Thẻ CC/Hộ chiếu: ', font: { name: 'Times New Roman', fallback: 'Arial' }, size: 28, bold: true }),
                     new TextRun({ text: objectData.idNumber || '', font: { name: 'Times New Roman', fallback: 'Arial' }, size: 28 })
                   ],
                   spacing: { after: 100 }
@@ -3821,7 +3821,7 @@ function backupCases(cases) {
                 }),
                 new Paragraph({
                   children: [
-                    new TextRun({ text: 'Số CMND/Thẻ CCCD/Hộ chiếu: ', font: { name: 'Times New Roman', fallback: 'Arial' }, size: 28, bold: true }),
+                    new TextRun({ text: 'Số CMND/Thẻ CCCD/Thẻ CC/Hộ chiếu: ', font: { name: 'Times New Roman', fallback: 'Arial' }, size: 28, bold: true }),
                     new TextRun({ text: objectData.idNumber || '', font: { name: 'Times New Roman', fallback: 'Arial' }, size: 28 })
                   ],
                   spacing: { after: 100 }
