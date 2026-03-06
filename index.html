@@ -6,7 +6,7 @@
   <title>Quản Lý Vụ Việc</title>
   <link rel="icon" href="data:;base64,iVBORw0KGgo=">
   <link rel="stylesheet" href="./libs/tailwind.min.css">
-  <link rel="stylesheet" href="./libs//flatpickr.min.css">
+  <link rel="stylesheet" href="./libs/flatpickr.min.css">
   <!-- Firebase SDK (compat mode - works without ES modules) -->
   <script src="./libs//firebase-app-compat.js"></script>
   <script src="./libs//firebase-firestore-compat.js"></script>
@@ -602,6 +602,30 @@
     .table-container { overflow-x: auto; }
     .table-fixed { table-layout: fixed; width: 100%; }
 
+    /* ============ OBJECT TABLE – cột cố định gọn ============ */
+    .obj-table { table-layout: fixed; border-collapse: collapse; min-width: 1100px; width: 100%; font-size: 13px; }
+    .obj-table th, .obj-table td { border: 1px solid #cbd5e1 !important; padding: 7px 8px; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-sizing: border-box; }
+    .obj-table thead tr { background: #1e3a8a; color: #fff; }
+    .obj-table thead th { font-weight: 600; font-size: 12px; text-align: center; white-space: nowrap; }
+    .obj-table tbody tr:nth-child(even) { background: #f8fafc; }
+    .obj-table tbody tr:hover { background: #eff6ff; }
+    .obj-table td { color: #1e293b; }
+    /* Độ rộng từng cột */
+    .obj-col-stt   { width: 36px;  min-width: 36px;  text-align: center; }
+    .obj-col-name  { width: 155px; min-width: 140px; }
+    .obj-col-dob   { width: 88px;  min-width: 88px;  text-align: center; }
+    .obj-col-id    { width: 120px; min-width: 115px; text-align: center; }
+    .obj-col-addr  { width: 195px; min-width: 175px; }
+    .obj-col-rel   { width: 95px;  min-width: 85px;  text-align: center; }
+    .obj-col-htxl  { width: 115px; min-width: 110px; text-align: center; }
+    .obj-col-ngmoi { width: 82px;  min-width: 80px;  text-align: center; }
+    .obj-col-hhtg  { width: 90px;  min-width: 88px;  text-align: center; }
+    .obj-col-hhtgiam { width: 90px; min-width: 88px; text-align: center; }
+    .obj-col-act   { width: 108px; min-width: 105px; text-align: center; }
+    .obj-table thead th { white-space: normal; word-break: keep-all; line-height: 1.3; }
+    /* Tooltip on hover for truncated text */
+    .obj-table td[title] { cursor: default; }
+
     /* ============ ERROR SHAKE ============ */
     .error-shake { animation: shake 0.5s; }
     @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -669,7 +693,7 @@
       storageBucket: "qlvv-captb-2026.firebasestorage.app",
       messagingSenderId: "573044136131",
       appId: "1:573044136131:web:9164694157d5e0fedbaa76"
-   };
+    };
     // =============================================================
 
     // Firebase state
@@ -689,7 +713,18 @@
       try {
         if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
         firestoreDB = firebase.firestore();
-        firestoreDB.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+        // Dùng settings thay vì enablePersistence() (tránh deprecation warning)
+        firestoreDB.settings({ cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED });
+        // Bật offline persistence (bỏ qua lỗi nếu đã enable ở tab khác)
+        firestoreDB.enablePersistence({ synchronizeTabs: true })
+          .catch(err => {
+            if (err.code === 'failed-precondition') {
+              // Nhiều tab mở cùng lúc - chỉ 1 tab có offline persistence
+              console.warn('[Firebase] Multi-tab: chỉ tab đầu tiên có offline cache');
+            } else if (err.code === 'unimplemented') {
+              console.warn('[Firebase] Trình duyệt này không hỗ trợ offline persistence');
+            }
+          });
         firebaseOnline = true;
         console.log('[Firebase] ✅ Initialized – Project:', FIREBASE_CONFIG.projectId);
         if (syncStatusCallback) syncStatusCallback('online');
@@ -724,10 +759,11 @@
 
     async function _idbSaveCases(cases) {
       const validCases = cases.filter(c => c.id && Array.isArray(c.type) && c.type.length > 0 && c.dateReceived && /^\d{4}-\d{2}-\d{2}$/.test(c.dateReceived));
-      if (!validCases.length) return;
       const db = await openDB();
       const tx = db.transaction(CASES_STORE, 'readwrite');
       const store = tx.objectStore(CASES_STORE);
+      // Clear toàn bộ store rồi re-insert — đảm bảo bản ghi đã xóa không còn tồn tại
+      store.clear();
       validCases.forEach(c => store.put(c));
       return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = (e) => rej(e.target.error); });
     }
@@ -1429,13 +1465,16 @@ function backupCases(cases) {
       "Điều 249. Tội tàng trữ trái phép chất ma túy",
       "Điều 250. Tội vận chuyển trái phép chất ma túy",
       "Điều 251. Tội mua bán trái phép chất ma túy",
-      "Điều 252. Tội tổ chức sử dụng trái phép chất ma túy",
-      "Điều 253. Tội chứa chấp việc sử dụng trái phép chất ma túy",
-      "Điều 254. Tội sử dụng trái phép chất ma túy",
-      "Điều 255. Tội cưỡng ép người khác sử dụng trái phép chất ma túy",
-      "Điều 256. Tội lôi kéo người khác sử dụng trái phép chất ma túy",
-      "Điều 257. Tội sản xuất, mua bán, vận chuyển, tàng trữ phương tiện, dụng cụ dùng vào việc sản xuất hoặc sử dụng trái phép chất ma túy",
-      "Điều 258. Tội vi phạm các quy định về quản lý chất ma túy"
+      "Điều 252. Tội chiếm đoạt chất ma túy",
+      "Điều 253. Tội tàng trữ, vận chuyển, mua bán hoặc chiếm đoạt tiền chất dùng vào việc sản xuất trái phép chất ma túy",
+      "Điều 254. Tội sản xuất, tàng trữ, vận chuyển hoặc mua bán phương tiện, dụng cụ dùng vào việc sản xuất hoặc sử dụng trái phép chất ma túy",
+      "Điều 255. Tội tổ chức sử dụng trái phép chất ma túy",
+      "Điều 256. Tội chứa chấp việc sử dụng trái phép chất ma túy",
+      "Điều 256a.Tội sử dụng trái phép chất ma túy",
+      "Điều 257. Tội cưỡng bức người khác sử dụng trái phép chất ma túy",
+      "Điều 258. Tội lôi kéo người khác sử dụng trái phép chất ma túy"
+      "Điều 259. Tội vi phạm quy định về quản lý chất ma túy, tiền chất, thuốc gây nghiện, thuốc hướng thần"
+      "Điều 260. Tội vi phạm quy định về tham gia giao thông đường bộ"
     ];
     
     const defaultAssignees = [
@@ -3592,57 +3631,56 @@ function backupCases(cases) {
           <div className="mt-4">
             <h3 className="text-lg font-bold mb-2">Danh sách đối tượng</h3>
             <div className="table-container">
-              <table className="table-fixed w-full border-collapse border">
+              <table className="obj-table">
                 <thead>
-                  <tr className="data-table-header">
-                    <th className="border p-2 fixed-width-stt">STT</th>
-                    <th className="border p-2 fixed-width-name">Họ tên</th>
-                    <th className="border p-2 fixed-width-birth">Sinh ngày</th>
-                    <th className="border p-2">Số CMND/CCCD/CC</th>
-                    <th className="border p-2 fixed-width-address">Nơi thường trú</th>
-                    <th className="border p-2">Mối quan hệ</th>
-                    <th className="border p-2">Hình thức xử lý</th>
-                    <th className="border p-2">Ngày mời</th>
-                    <th className="border p-2">Ngày hết hạn tạm giữ</th>
-                    <th className="border p-2">Ngày hết hạn tạm giam</th>
-                    <th style={{padding: "6px 8px"}}>Hành động</th>
+                  <tr>
+                    <th className="obj-col-stt">STT</th>
+                    <th className="obj-col-name">Họ tên</th>
+                    <th className="obj-col-dob">Sinh ngày</th>
+                    <th className="obj-col-id">Số CMND/CCCD/CC</th>
+                    <th className="obj-col-addr">Nơi thường trú</th>
+                    <th className="obj-col-rel">Mối quan hệ</th>
+                    <th className="obj-col-htxl">Hình thức xử lý</th>
+                    <th className="obj-col-ngmoi">Ngày mời</th>
+                    <th className="obj-col-hhtg">Ngày HH tạm giữ</th>
+                    <th className="obj-col-hhtgiam">Ngày HH tạm giam</th>
+                    <th className="obj-col-act">Hành động</th>
                   </tr>
                 </thead>
                 <tbody>
                   {tempObjects.map((obj, index) => (
                     <tr key={index}>
-                      <td className="fixed-width-stt wrap-text">{index + 1}</td>
-                      <td className="border p-2 fixed-width-name wrap-text" title={obj.name}>{obj.name}</td>
-                      <td className="border p-2 fixed-width-birth wrap-text">{DateUtils.formatToVietnamese(obj.birthDate)}</td>
-                      <td className="wrap-text" title={obj.idNumber}>{obj.idNumber}</td>
-                      <td className="border p-2 fixed-width-address wrap-text" title={obj.permanentAddress}>{obj.permanentAddress}</td>
-                      <td className="wrap-text" title={obj.relationship}>{obj.relationship}</td>
-                      <td className="wrap-text" title={obj.handlingMethod}>{obj.handlingMethod}</td>
-                      <td className="border p-2 wrap-text">{DateUtils.formatToVietnamese(obj.invitationDate)}</td>
-                      <td className={`border p-2 wrap-text ${showRedCustody(obj) ? 'text-red-500' : 'text-green-500'}`}>
+                      <td className="obj-col-stt">{index + 1}</td>
+                      <td className="obj-col-name" title={obj.name}>{obj.name}</td>
+                      <td className="obj-col-dob">{DateUtils.formatToVietnamese(obj.birthDate)}</td>
+                      <td className="obj-col-id" title={obj.idNumber}>{obj.idNumber}</td>
+                      <td className="obj-col-addr" title={obj.permanentAddress}>{obj.permanentAddress}</td>
+                      <td className="obj-col-rel" title={obj.relationship}>{obj.relationship}</td>
+                      <td className="obj-col-htxl" title={obj.handlingMethod}>{obj.handlingMethod}</td>
+                      <td className="obj-col-ngmoi">{DateUtils.formatToVietnamese(obj.invitationDate)}</td>
+                      <td className={`obj-col-hhtg ${showRedCustody(obj) ? 'text-red-500' : (obj.custodyExpirationDate ? 'text-green-500' : '')}`}
+                          title="Ngày hết hạn tạm giữ">
                         {DateUtils.formatToVietnamese(obj.custodyExpirationDate)}
                       </td>
-                      <td className={`border p-2 wrap-text ${showRedDetention(obj, caseData.status) ? 'text-red-500' : getDetentionColor(obj, caseData.status)}`}>
+                      <td className={`obj-col-hhtgiam ${showRedDetention(obj, caseData.status) ? 'text-red-500' : getDetentionColor(obj, caseData.status)}`}
+                          title="Ngày hết hạn tạm giam">
                         {DateUtils.formatToVietnamese(obj.detentionExpirationDate)}
                       </td>
-                      <td style={{padding: "6px 8px"}}>
-                        <button
-                          className="btn btn-warning btn-sm"
-                          onClick={() => handleEditObject(index)}
-                          disabled={!isEditing}
-                        >
-                          Chỉnh sửa
-                        </button>
-                        <button
-                          className="btn btn-danger btn-sm"
-                          onClick={() => handleDeleteConfirm(index)}
-                          disabled={!isEditing}
-                        >
-                          Xóa
-                        </button>
+                      <td className="obj-col-act">
+                        <div style={{display:'flex',gap:'4px',justifyContent:'center'}}>
+                          <button className="btn btn-warning btn-sm" onClick={() => handleEditObject(index)} disabled={!isEditing}>Sửa</button>
+                          <button className="btn btn-danger btn-sm" onClick={() => handleDeleteConfirm(index)} disabled={!isEditing}>Xóa</button>
+                        </div>
                       </td>
                     </tr>
                   ))}
+                  {tempObjects.length === 0 && (
+                    <tr>
+                      <td colSpan={11} style={{textAlign:'center',color:'#94a3b8',padding:'20px',fontStyle:'italic'}}>
+                        Chưa có đối tượng nào. Nhấn "➕ Thêm đối tượng" để thêm.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -4945,15 +4983,23 @@ function backupCases(cases) {
         console.log('Deleting case with id:', deleteCaseId);
         const deletedCase = cases.find(c => c.id === deleteCaseId);
         setUndoData({ type: 'case', data: deletedCase });
+        // 1. Update React state immediately
         setCases(prev => prev.filter(c => c.id !== deleteCaseId));
+        // 2. Xóa thực sự khỏi IndexedDB và Firestore (không chỉ update state)
+        deleteCaseFromDB(deleteCaseId).catch(e => console.warn('Delete from DB failed:', e));
         setShowConfirm(false);
         setDeleteCaseId(null);
+        addToast('Đã xóa vụ việc thành công!', 'success');
       }, [deleteCaseId, cases]);
       
       const handleUndoDeleteCase = useCallback(() => {
         if (undoData && undoData.type === 'case') {
-          setCases(prev => [...prev, undoData.data]);
+          const restoredCase = undoData.data;
+          setCases(prev => [...prev, restoredCase]);
+          // Lưu lại vụ việc vào DB sau khi hoàn tác
+          saveCasesToDB([restoredCase]).catch(e => console.warn('Undo restore failed:', e));
           setUndoData(null);
+          addToast('Đã hoàn tác xóa vụ việc!', 'success');
         }
       }, [undoData]);
       
