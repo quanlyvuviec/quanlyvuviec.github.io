@@ -3008,6 +3008,675 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
     // exportWordTemplate, processPlaceholderTool
     // -> Defined in native <script> block above (Babel cannot compile async/await)
 
+    // ==================== STATISTICS VIEW ====================
+    const StatisticsView = ({ cases }) => {
+      const [statConfig, setStatConfig] = React.useState({
+        loaiXuat: 'both', trangThai: 'all', tuNgay: '', denNgay: '', phuong: '', khuPhoRange: '',
+      });
+      const [statsResult, setStatsResult] = React.useState(null);
+      const [calculating, setCalculating] = React.useState(false);
+      const [exporting, setExporting] = React.useState('');
+      const tuNgayRef = React.useRef(null);
+      const denNgayRef = React.useRef(null);
+
+      React.useEffect(() => {
+        let fp1, fp2;
+        if (tuNgayRef.current) fp1 = flatpickr(tuNgayRef.current, { dateFormat: 'd/m/Y', onChange: ([d]) => { if(d) setStatConfig(c=>({...c,tuNgay:d.toISOString().slice(0,10)})); } });
+        if (denNgayRef.current) fp2 = flatpickr(denNgayRef.current, { dateFormat: 'd/m/Y', onChange: ([d]) => { if(d) setStatConfig(c=>({...c,denNgay:d.toISOString().slice(0,10)})); } });
+        return () => { fp1&&fp1.destroy(); fp2&&fp2.destroy(); };
+      }, []);
+
+      const parseKhuPhoRange = (s) => {
+        if (!s||!s.trim()) return null;
+        const set = new Set();
+        s.split(',').forEach(p => { p=p.trim(); const r=p.match(/^(\d+)\s*-\s*(\d+)$/); if(r){for(let i=parseInt(r[1]);i<=parseInt(r[2]);i++)set.add(i);}else{const n=parseInt(p);if(!isNaN(n))set.add(n);} });
+        return set;
+      };
+      const extractKhuPho = (addr) => { if(!addr) return null; const m=addr.match(/khu\s*ph[oố]\s*(\d+)/i); return m?parseInt(m[1]):null; };
+      const isDrugRelated = (typeArr) => { const kw=['ma túy','ma tuy','điều 247','điều 248','điều 249','điều 250','điều 251','điều 252','điều 253','điều 254','điều 255','điều 256','điều 257','điều 258','điều 259','điều 194','điều 197','điều 198','heroin','methamphetamine','cần sa','thuốc lắc','tàng trữ','mua bán trái phép','sử dụng trái phép']; const s=(typeArr||[]).join(' ').toLowerCase(); return kw.some(k=>s.includes(k)); };
+      const getCrimeCategory = (c) => { const t=Array.isArray(c.type)?c.type:[]; if(isDrugRelated(t)) return 'Ma túy'; if(t.length===0) return 'Chưa phân loại'; return t.join(', '); };
+      const computeAge = (bd) => {
+        if(!bd) return null;
+        let yr,mo,dy;
+        const iso=bd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if(iso){yr=parseInt(iso[1]);mo=parseInt(iso[2]);dy=parseInt(iso[3]);}
+        else{const vn=bd.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);if(vn){dy=parseInt(vn[1]);mo=parseInt(vn[2]);yr=parseInt(vn[3]);}else{const y=bd.match(/(\d{4})/);if(!y)return null;return new Date().getFullYear()-parseInt(y[1]);}}
+        const now=new Date(); let age=now.getFullYear()-yr; if(now.getMonth()+1<mo||(now.getMonth()+1===mo&&now.getDate()<dy))age--; return(age>=0&&age<120)?age:null;
+      };
+
+      const computeStats = () => {
+        setCalculating(true);
+        setTimeout(() => {
+          const kpSet=parseKhuPhoRange(statConfig.khuPhoRange);
+          const phuong=(statConfig.phuong||'').trim().toLowerCase();
+          let filtered=cases.slice();
+          if(statConfig.tuNgay) filtered=filtered.filter(c=>c.dateReceived>=statConfig.tuNgay);
+          if(statConfig.denNgay) filtered=filtered.filter(c=>c.dateReceived<=statConfig.denNgay);
+          if(statConfig.loaiXuat==='tinbao') filtered=filtered.filter(c=>(c.phanLoaiTin||'').toLowerCase()==='tin báo'||(c.investigationResult||'').toLowerCase()==='tin báo');
+          else if(statConfig.loaiXuat==='vuviec') filtered=filtered.filter(c=>(c.phanLoaiTin||'').toLowerCase()!=='tin báo'&&(c.investigationResult||'').toLowerCase()!=='tin báo');
+          if(statConfig.trangThai==='dangxuly') filtered=filtered.filter(c=>c.status!=='hoàn thành');
+          else if(statConfig.trangThai==='hoanthanh') filtered=filtered.filter(c=>c.status==='hoàn thành');
+
+          const crimeGroups={};
+          filtered.forEach(c=>{const cat=getCrimeCategory(c);if(!crimeGroups[cat])crimeGroups[cat]=[];crimeGroups[cat].push(c);});
+
+          const groupStats={};
+          Object.entries(crimeGroups).forEach(([cat,caseList])=>{
+            const totalCases=caseList.length;
+            const khoiToCount=caseList.filter(c=>(c.investigationResult||'').toLowerCase().includes('khởi tố')).length;
+            const chuyenCount=caseList.filter(c=>(c.investigationResult||'').toLowerCase().includes('chuyển hồ sơ')).length;
+            const solved=totalCases>0?Math.round((khoiToCount/totalCases)*100):0;
+            const allObjs=caseList.flatMap(c=>(c.objects||[]).map(o=>({...o,_caseId:c.id})));
+            const kpCount={};
+            let diaBanCount=0;
+            allObjs.forEach(obj=>{
+              const addr=obj.currentResidence||obj.permanentAddress||'';
+              const kp=extractKhuPho(addr);
+              const phuongOk=phuong?addr.toLowerCase().includes(phuong):true;
+              const kpOk=kpSet?(kp!==null&&kpSet.has(kp)):(kp!==null);
+              if(phuongOk&&kpOk){const key='Khu phố '+kp;kpCount[key]=(kpCount[key]||0)+1;diaBanCount++;}
+              else{kpCount['Địa bàn khác']=(kpCount['Địa bàn khác']||0)+1;}
+            });
+            const genderCount={};
+            allObjs.forEach(o=>{const g=o.gender||'Chưa rõ';genderCount[g]=(genderCount[g]||0)+1;});
+            const eduCount={};
+            allObjs.forEach(o=>{const e=o.education||'Chưa rõ';eduCount[e]=(eduCount[e]||0)+1;});
+            const ageCount={};
+            allObjs.forEach(o=>{const age=computeAge(o.birthDate||'');const key=age!==null?String(age)+' tuổi':'Chưa rõ';ageCount[key]=(ageCount[key]||0)+1;});
+            const locCount={};
+            caseList.forEach(c=>{const kp=extractKhuPho(c.noixayra||'');const key=kp!==null?'Khu phố '+kp:(c.noixayra&&c.noixayra.trim()?c.noixayra.trim().substring(0,50):'Chưa rõ');locCount[key]=(locCount[key]||0)+1;});
+            groupStats[cat]={totalCases,khoiToCount,chuyenCount,solved,totalObjs:allObjs.length,diaBanCount,diaBanKhac:kpCount['Địa bàn khác']||0,kpCount,genderCount,eduCount,ageCount,locCount,caseList};
+          });
+
+          const overallTotalCases=filtered.length;
+          const overallTotalObjs=filtered.flatMap(c=>c.objects||[]).length;
+          const overallKhoiTo=filtered.filter(c=>(c.investigationResult||'').toLowerCase().includes('khởi tố')).length;
+          const overallChuyen=filtered.filter(c=>(c.investigationResult||'').toLowerCase().includes('chuyển hồ sơ')).length;
+          const overallSolved=overallTotalCases>0?Math.round((overallKhoiTo/overallTotalCases)*100):0;
+          setStatsResult({groupStats,overallTotalCases,overallTotalObjs,overallKhoiTo,overallChuyen,overallSolved,kpTotal:kpSet?kpSet.size:null,phuong,filteredCases:filtered,statConfig:{...statConfig}});
+          setCalculating(false);
+        },80);
+      };
+
+      const exportExcel = () => {
+        if(!statsResult) return;
+        setExporting('excel');
+        try {
+          const {groupStats,filteredCases,overallTotalCases,overallTotalObjs,overallKhoiTo,overallChuyen,overallSolved,phuong:ph,statConfig:sc}=statsResult;
+          const wb=XLSX.utils.book_new();
+          const loaiLabel=sc.loaiXuat==='both'?'Tất cả':sc.loaiXuat==='tinbao'?'Tin báo':'Vụ việc/Vụ án';
+          const ttLabel=sc.trangThai==='all'?'Tất cả':sc.trangThai==='dangxuly'?'Đang xử lý':'Đã hoàn thành';
+          const dateStr=(DateUtils.formatToVietnamese(sc.tuNgay)||'--')+' đến '+(DateUtils.formatToVietnamese(sc.denNgay)||'--');
+          const title='THỐNG KÊ VỤ VIỆC — '+loaiLabel.toUpperCase()+' — '+dateStr+(ph?' — Phường '+ph:'');
+
+          // ── Sheet 1: Chi tiết từng loại tội ──
+          const detRows=[[title],['Trạng thái: '+ttLabel],[]];
+          Object.entries(groupStats).sort((a,b)=>b[1].totalCases-a[1].totalCases).forEach(([cat,gs])=>{
+            detRows.push(['▌ '+cat.toUpperCase()]);
+            detRows.push(['Tổng vụ','Đã khởi tố','Chuyển hồ sơ','Tỷ lệ khám phá','Tổng đối tượng','Cư trú địa bàn','Địa bàn khác']);
+            detRows.push([gs.totalCases,gs.khoiToCount,gs.chuyenCount,gs.solved+'%',gs.totalObjs,gs.diaBanCount,gs.diaBanKhac]);
+            detRows.push([]);
+            // Giới tính
+            detRows.push(['Giới tính:','Số lượng','Tỷ lệ']);
+            const gtTotal=Object.values(gs.genderCount).reduce((s,v)=>s+v,0);
+            Object.entries(gs.genderCount).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>detRows.push([k,v,gtTotal>0?Math.round(v/gtTotal*100)+'%':'']));
+            detRows.push([]);
+            // Trình độ
+            detRows.push(['Trình độ học vấn:','Số lượng','Tỷ lệ']);
+            const edTotal=Object.values(gs.eduCount).reduce((s,v)=>s+v,0);
+            Object.entries(gs.eduCount).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>detRows.push([k,v,edTotal>0?Math.round(v/edTotal*100)+'%':'']));
+            detRows.push([]);
+            // Độ tuổi
+            detRows.push(['Độ tuổi:','Số lượng','Tỷ lệ']);
+            const agTotal=Object.values(gs.ageCount).reduce((s,v)=>s+v,0);
+            Object.entries(gs.ageCount).sort((a,b)=>parseInt(a[0])-parseInt(b[0])||0).forEach(([k,v])=>detRows.push([k,v,agTotal>0?Math.round(v/agTotal*100)+'%':'']));
+            detRows.push([]);
+            // Nơi xảy ra
+            detRows.push(['Nơi xảy ra (khu phố):','Số vụ','Tỷ lệ']);
+            const lcTotal=Object.values(gs.locCount).reduce((s,v)=>s+v,0);
+            Object.entries(gs.locCount).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>detRows.push([k,v,lcTotal>0?Math.round(v/lcTotal*100)+'%':'']));
+            detRows.push([]);
+            // Địa bàn khu phố
+            detRows.push(['Nơi ở đối tượng (khu phố/địa bàn):','Số đối tượng','Tỷ lệ']);
+            const kpTotal2=Object.values(gs.kpCount).reduce((s,v)=>s+v,0);
+            Object.entries(gs.kpCount).sort((a,b)=>{const na=parseInt(a[0].replace(/\D/g,'')),nb=parseInt(b[0].replace(/\D/g,''));return isNaN(na)||isNaN(nb)?b[1]-a[1]:na-nb;}).forEach(([k,v])=>detRows.push([k,v,kpTotal2>0?Math.round(v/kpTotal2*100)+'%':'']));
+            detRows.push([],[]);
+          });
+          const ws1=XLSX.utils.aoa_to_sheet(detRows);
+          ws1['!cols']=[{wch:38},{wch:14},{wch:14},{wch:14},{wch:16},{wch:16},{wch:14}];
+          XLSX.utils.book_append_sheet(wb,ws1,'Chi tiết loại tội');
+
+          // ── Sheet 2: Bảng tổng hợp cuối ──
+          // Build merged kp incident + suspect maps
+          const allLocCount={};
+          const allKpCount={};
+          Object.values(groupStats).forEach(gs=>{
+            Object.entries(gs.locCount).forEach(([k,v])=>{allLocCount[k]=(allLocCount[k]||0)+v;});
+            Object.entries(gs.kpCount).forEach(([k,v])=>{allKpCount[k]=(allKpCount[k]||0)+v;});
+          });
+          // Find top khu phố
+          const topIncKp=Object.entries(allLocCount).filter(([k])=>k!=='Chưa rõ').sort((a,b)=>b[1]-a[1]);
+          const topObjKp=Object.entries(allKpCount).filter(([k])=>k!=='Địa bàn khác').sort((a,b)=>b[1]-a[1]);
+
+          const sumRows=[
+            [title],['Trạng thái: '+ttLabel],[]
+          ];
+          // Overall summary block
+          sumRows.push(['BẢNG TỔNG HỢP TOÀN BỘ']);
+          sumRows.push(['Chỉ tiêu','Số liệu']);
+          sumRows.push(['Tổng số vụ việc',overallTotalCases]);
+          sumRows.push(['Tổng số đối tượng',overallTotalObjs]);
+          sumRows.push(['Đã khởi tố',overallKhoiTo]);
+          sumRows.push(['Đã chuyển hồ sơ',overallChuyen]);
+          sumRows.push(['Tỷ lệ khám phá',overallSolved+'%']);
+          sumRows.push([]);
+          // Per crime type overview
+          sumRows.push(['PHÂN LOẠI THEO TỘI DANH']);
+          sumRows.push(['Tội danh','Số vụ','Khởi tố','Chuyển HS','Tỷ lệ KP','Tổng ĐT','Địa bàn','ĐB khác']);
+          Object.entries(groupStats).sort((a,b)=>b[1].totalCases-a[1].totalCases).forEach(([cat,gs])=>{
+            sumRows.push([cat,gs.totalCases,gs.khoiToCount,gs.chuyenCount,gs.solved+'%',gs.totalObjs,gs.diaBanCount,gs.diaBanKhac]);
+          });
+          sumRows.push([]);
+          // Top khu pho incidents
+          if(topIncKp.length>0){
+            sumRows.push(['KHU PHỐ XẢY RA NHIỀU VỤ NHẤT']);
+            sumRows.push(['Khu phố','Số vụ','Tỷ lệ']);
+            const incTotal=topIncKp.reduce((s,[,v])=>s+v,0);
+            topIncKp.slice(0,10).forEach(([k,v])=>sumRows.push([k,v,incTotal>0?Math.round(v/incTotal*100)+'%':'']));
+            sumRows.push([]);
+          }
+          // Top khu pho suspects
+          if(topObjKp.length>0){
+            sumRows.push(['KHU PHỐ CÓ NHIỀU ĐỐI TƯỢNG NHẤT']);
+            sumRows.push(['Khu phố','Số đối tượng','Tỷ lệ']);
+            const objKpTotal=topObjKp.reduce((s,[,v])=>s+v,0);
+            topObjKp.slice(0,10).forEach(([k,v])=>sumRows.push([k,v,objKpTotal>0?Math.round(v/objKpTotal*100)+'%':'']));
+            sumRows.push([]);
+          }
+          sumRows.push(['* Khu phố xảy ra nhiều vụ nhất: '+(topIncKp[0]?topIncKp[0][0]+' ('+topIncKp[0][1]+' vụ)':'Không có dữ liệu')]);
+          sumRows.push(['* Khu phố có nhiều đối tượng nhất: '+(topObjKp[0]?topObjKp[0][0]+' ('+topObjKp[0][1]+' đối tượng)':'Không có dữ liệu')]);
+          const ws2=XLSX.utils.aoa_to_sheet(sumRows);
+          ws2['!cols']=[{wch:38},{wch:12},{wch:12},{wch:12},{wch:14},{wch:14},{wch:14},{wch:14}];
+          XLSX.utils.book_append_sheet(wb,ws2,'Tổng hợp cuối');
+
+          // ── Sheet 3: Chi tiết vụ việc ──
+          const caseHdr=['STT','Mã vụ việc','Loại vụ việc','Nhóm TK','Ngày tiếp nhận','Phân loại tin','Nơi xảy ra','Khu phố xảy ra','Kết quả điều tra','Trạng thái'];
+          const caseData=[caseHdr];
+          filteredCases.forEach((c,i)=>{const kp=extractKhuPho(c.noixayra||'');caseData.push([i+1,c.id||'',(Array.isArray(c.type)?c.type.join(', '):(c.type||'')),getCrimeCategory(c),DateUtils.formatToVietnamese(c.dateReceived)||'',c.phanLoaiTin||'',c.noixayra||'',kp?'Khu phố '+kp:'',c.investigationResult||'',c.status||'']);});
+          const ws3=XLSX.utils.aoa_to_sheet(caseData);
+          ws3['!cols']=[{wch:5},{wch:16},{wch:35},{wch:15},{wch:14},{wch:12},{wch:40},{wch:14},{wch:22},{wch:14}];
+          XLSX.utils.book_append_sheet(wb,ws3,'Vụ Việc');
+
+          // ── Sheet 4: Chi tiết đối tượng ──
+          const kpSet2=parseKhuPhoRange(statConfig.khuPhoRange);
+          const ph2=(statConfig.phuong||'').trim().toLowerCase();
+          const objHdr=['STT','Mã vụ việc','Nhóm TK','Họ tên','Ngày sinh','Tuổi','Giới tính','Hành vi','Trình độ','Nơi ở hiện tại','Khu phố (nơi ở)','Nhóm địa bàn'];
+          const objData=[objHdr];
+          let stt=1;
+          filteredCases.forEach(c=>{
+            const cat=getCrimeCategory(c);
+            (c.objects||[]).forEach(o=>{
+              const age=computeAge(o.birthDate||'');
+              const addr=o.currentResidence||o.permanentAddress||'';
+              const kp=extractKhuPho(addr);
+              const phuongOk=ph2?addr.toLowerCase().includes(ph2):true;
+              const kpOk=kpSet2?(kp!==null&&kpSet2.has(kp)):(kp!==null);
+              const diaBan=(phuongOk&&kpOk)?'Khu phố '+kp:'Địa bàn khác';
+              const hanhVi=Array.isArray(o.behavior)?o.behavior.join(', '):(o.behavior||'');
+              objData.push([stt++,c.id||'',cat,o.name||'',DateUtils.formatToVietnamese(o.birthDate)||o.birthDate||'',age!==null?age:'',o.gender||'',hanhVi,o.education||'',addr,kp?'Khu phố '+kp:'',diaBan]);
+            });
+          });
+          const ws4=XLSX.utils.aoa_to_sheet(objData);
+          ws4['!cols']=[{wch:5},{wch:16},{wch:15},{wch:20},{wch:12},{wch:6},{wch:8},{wch:30},{wch:10},{wch:40},{wch:14},{wch:16}];
+          XLSX.utils.book_append_sheet(wb,ws4,'Đối Tượng');
+          const buf=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+          saveAs(new Blob([buf],{type:'application/octet-stream'}),'thong_ke_'+new Date().toISOString().slice(0,10)+'.xlsx');
+        } catch(e){alert('Lỗi xuất Excel: '+e.message);}
+        setExporting('');
+      };
+
+      const exportWord = async () => {
+        if(!statsResult) return;
+        setExporting('word');
+        try {
+          const {Document,Packer,Paragraph,TextRun,Table,TableRow,TableCell,WidthType,AlignmentType,BorderStyle}=window.docx;
+          const {groupStats,overallTotalCases,overallTotalObjs,overallKhoiTo,overallChuyen,overallSolved,phuong,kpTotal,statConfig:sc}=statsResult;
+          const loaiLabel=sc.loaiXuat==='both'?'Tất cả':sc.loaiXuat==='tinbao'?'Tin báo':'Vụ việc/Vụ án';
+          const ttLabel=sc.trangThai==='all'?'Tất cả':sc.trangThai==='dangxuly'?'Đang xử lý':'Đã hoàn thành';
+          const dateLabel=(DateUtils.formatToVietnamese(sc.tuNgay)||'--')+' đến '+(DateUtils.formatToVietnamese(sc.denNgay)||'--');
+          const tnr=(text,opts={})=>new TextRun({text:String(text||''),font:{name:'Times New Roman',fallback:'Arial'},size:opts.size||24,bold:!!opts.bold,color:opts.color||'000000',italics:!!opts.italic});
+          const para=(runs,align,spacing)=>new Paragraph({children:Array.isArray(runs)?runs:[runs],alignment:align||AlignmentType.LEFT,spacing:{after:spacing||60}});
+          const bBorder={style:BorderStyle.SINGLE,size:6,color:'1E3A8A'};
+          const tBorder={style:BorderStyle.SINGLE,size:4,color:'CBD5E1'};
+          const mkCell=(text,opts={})=>new TableCell({children:[para([tnr(text,{bold:opts.bold,size:22,color:opts.color})],opts.align||AlignmentType.CENTER,20)],width:opts.width?{size:opts.width,type:WidthType.DXA}:{size:1,type:WidthType.AUTO},shading:opts.bg?{fill:opts.bg}:undefined,borders:opts.header?{top:bBorder,bottom:bBorder,left:bBorder,right:bBorder}:{top:tBorder,bottom:tBorder,left:tBorder,right:tBorder}});
+          const mkTable=(headers,rows,cw)=>new Table({width:{size:100,type:WidthType.PERCENTAGE},rows:[new TableRow({children:headers.map((h,i)=>mkCell(h,{bold:true,bg:'1E3A8A',color:'FFFFFF',header:true,width:cw?cw[i]:undefined})),tableHeader:true}),...rows.map((row,ri)=>new TableRow({children:row.map((cell,ci)=>mkCell(cell,{bg:ri%2===0?'EFF6FF':'FFFFFF',align:ci===0?AlignmentType.LEFT:AlignmentType.CENTER,width:cw?cw[ci]:undefined}))}))]}); 
+          const mkDataTable=(data,col1,col2,sortFn)=>{if(!data||Object.keys(data).length===0)return[];let entries=Object.entries(data);if(sortFn)entries=entries.sort(sortFn);else entries=entries.sort((a,b)=>b[1]-a[1]);const total=entries.reduce((s,[,v])=>s+v,0);return[mkTable([col1,col2,'Tỷ lệ'],entries.map(([k,v])=>[k,String(v),Math.round(v/total*100)+'%']),[4500,1200,1200])];};
+          const hdr1=(text)=>para([tnr(text,{bold:true,size:28,color:'1E3A8A'})],AlignmentType.LEFT,100);
+          const hdr2=(text)=>para([tnr(text,{bold:true,size:26,color:'1D4ED8'})],AlignmentType.LEFT,80);
+          const sp=()=>para([tnr('')],AlignmentType.LEFT,40);
+          const lbl=(text)=>para([tnr(text,{bold:true,size:22,color:'374151'})],AlignmentType.LEFT,20);
+
+          // Build merged kp maps for summary
+          const allLocCount={};
+          const allKpCount={};
+          Object.values(groupStats).forEach(gs=>{
+            Object.entries(gs.locCount).forEach(([k,v])=>{allLocCount[k]=(allLocCount[k]||0)+v;});
+            Object.entries(gs.kpCount).forEach(([k,v])=>{allKpCount[k]=(allKpCount[k]||0)+v;});
+          });
+          const topIncKp=Object.entries(allLocCount).filter(([k])=>k!=='Chưa rõ').sort((a,b)=>b[1]-a[1]);
+          const topObjKp=Object.entries(allKpCount).filter(([k])=>k!=='Địa bàn khác').sort((a,b)=>b[1]-a[1]);
+
+          const children=[
+            para([tnr('BÁO CÁO THỐNG KÊ VỤ VIỆC',{bold:true,size:32,color:'1E3A8A'})],AlignmentType.CENTER,80),
+            para([tnr('Loại: '+loaiLabel+' — Trạng thái: '+ttLabel+' — Kỳ: '+dateLabel,{size:22,italic:true,color:'64748B'})],AlignmentType.CENTER,40),
+            phuong?para([tnr('Địa bàn: Phường '+phuong+(kpTotal?' ('+kpTotal+' khu phố)':''),{size:22,color:'1D4ED8'})],AlignmentType.CENTER,40):sp(),
+            sp(),
+
+            // I. TỔNG QUAN
+            hdr1('I. TỔNG QUAN'),
+            mkTable(['Chỉ tiêu','Số liệu'],[
+              ['Tổng số vụ việc',String(overallTotalCases)],
+              ['Tổng đối tượng',String(overallTotalObjs)],
+              ['Đã khởi tố vụ án',String(overallKhoiTo)],
+              ['Đã chuyển hồ sơ',String(overallChuyen)],
+              ['Tỷ lệ khám phá',overallSolved+'%'],
+            ],[5000,2500]),
+            sp(),
+
+            // II. CHI TIẾT TỪNG TỘI DANH
+            hdr1('II. CHI TIẾT TỪNG LOẠI VỤ VIỆC'),
+            ...Object.entries(groupStats).sort((a,b)=>b[1].totalCases-a[1].totalCases).flatMap(([cat,gs],idx)=>[
+              sp(),hdr2((idx+1)+'. '+cat),
+              mkTable(['Chỉ tiêu','Số liệu'],[
+                ['Số vụ',String(gs.totalCases)],
+                ['Đã khởi tố',String(gs.khoiToCount)],
+                ['Đã chuyển hồ sơ',String(gs.chuyenCount)],
+                ['Tỷ lệ khám phá',gs.solved+'%'],
+                ['Tổng đối tượng',String(gs.totalObjs)],
+                ['Cư trú trên địa bàn',String(gs.diaBanCount)],
+                ['Địa bàn khác',String(gs.diaBanKhac)],
+              ],[5000,2500]),
+              sp(),lbl('Giới tính đối tượng:'),...mkDataTable(gs.genderCount,'Giới tính','Số lượng'),
+              sp(),lbl('Trình độ học vấn:'),...mkDataTable(gs.eduCount,'Trình độ','Số lượng'),
+              sp(),lbl('Độ tuổi đối tượng:'),...mkDataTable(gs.ageCount,'Tuổi','Số lượng',(a,b)=>parseInt(a[0])-parseInt(b[0])||0),
+              sp(),lbl('Nơi xảy ra vụ việc (khu phố):'),...mkDataTable(gs.locCount,'Khu phố / Địa điểm','Số vụ'),
+              sp(),lbl('Nơi ở đối tượng (khu phố):'),...mkDataTable(gs.kpCount,'Khu phố / Địa bàn','Số đối tượng'),
+            ].filter(Boolean)),
+            sp(),
+
+            // III. BẢNG TỔNG HỢP CUỐI NĂM
+            hdr1('III. BẢNG TỔNG HỢP'),
+            lbl('Phân loại theo tội danh:'),
+            mkTable(
+              ['Tội danh','Số vụ','Khởi tố','Chuyển HS','Tỷ lệ KP','Tổng ĐT','Địa bàn','ĐB khác'],
+              Object.entries(groupStats).sort((a,b)=>b[1].totalCases-a[1].totalCases).map(([cat,gs])=>[cat,String(gs.totalCases),String(gs.khoiToCount),String(gs.chuyenCount),gs.solved+'%',String(gs.totalObjs),String(gs.diaBanCount),String(gs.diaBanKhac)]),
+              [2800,900,900,900,1000,900,900,900]
+            ),
+            sp(),
+            topIncKp.length>0?lbl('Khu phố xảy ra nhiều vụ nhất:'):null,
+            ...(topIncKp.length>0?mkDataTable(Object.fromEntries(topIncKp.slice(0,10)),'Khu phố','Số vụ'):[]),
+            sp(),
+            topObjKp.length>0?lbl('Khu phố có nhiều đối tượng nhất:'):null,
+            ...(topObjKp.length>0?mkDataTable(Object.fromEntries(topObjKp.slice(0,10)),'Khu phố','Số đối tượng'):[]),
+            sp(),
+            para([
+              tnr('Nhận xét: ',{bold:true,size:22}),
+              tnr('Khu phố xảy ra nhiều nhất: '+(topIncKp[0]?topIncKp[0][0]+' ('+topIncKp[0][1]+' vụ)':'—')+'. Khu phố có nhiều đối tượng nhất: '+(topObjKp[0]?topObjKp[0][0]+' ('+topObjKp[0][1]+' đối tượng)':'—')+'.',{size:22,italic:true})
+            ],AlignmentType.LEFT,60),
+          ].filter(Boolean);
+
+          const doc=new Document({sections:[{properties:{page:{margin:{top:720,bottom:720,left:1080,right:720}}},children}]});
+          const blob=await Packer.toBlob(doc);
+          saveAs(blob,'bao_cao_thong_ke_'+new Date().toISOString().slice(0,10)+'.docx');
+        } catch(e){alert('Lỗi xuất Word: '+e.message);console.error(e);}
+        setExporting('');
+      };
+
+      // ── Design Components ──────────────────────────────────────────────
+
+      // Donut ring chart (SVG, pure CSS-in-JS)
+      const DonutChart = ({ data, size=80 }) => {
+        const entries = Object.entries(data).filter(([,v])=>v>0);
+        const total = entries.reduce((s,[,v])=>s+v,0);
+        if(total===0) return null;
+        const pal = ['#3b82f6','#ec4899','#10b981','#f59e0b','#8b5cf6','#06b6d4','#ef4444'];
+        const r=30; const cx=size/2; const cy=size/2; const circ=2*Math.PI*r;
+        let offset=0;
+        const slices = entries.map(([label,val],i)=>{
+          const pct=val/total; const len=pct*circ; const s={offset,len,color:pal[i%pal.length],label,val,pct};
+          offset+=len; return s;
+        });
+        return (
+          <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+            <svg width={size} height={size} style={{flexShrink:0}}>
+              <circle cx={cx} cy={cy} r={r} fill="none" stroke="#f1f5f9" strokeWidth="10"/>
+              {slices.map((s,i)=>(
+                <circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={s.color} strokeWidth="10"
+                  strokeDasharray={`${s.len} ${circ-s.len}`}
+                  strokeDashoffset={circ/4-s.offset}
+                  style={{transition:'stroke-dasharray 0.4s'}}/>
+              ))}
+              <text x={cx} y={cy+1} textAnchor="middle" dominantBaseline="middle" fontSize="13" fontWeight="800" fill="#1e293b">{total}</text>
+            </svg>
+            <div style={{display:'flex',flexDirection:'column',gap:'3px'}}>
+              {slices.map((s,i)=>(
+                <div key={i} style={{display:'flex',alignItems:'center',gap:'5px',fontSize:'11px'}}>
+                  <div style={{width:'8px',height:'8px',borderRadius:'50%',background:s.color,flexShrink:0}}/>
+                  <span style={{color:'#374151',fontWeight:500}}>{s.label}</span>
+                  <span style={{fontWeight:700,color:s.color}}>{s.val}</span>
+                  <span style={{color:'#94a3b8',fontSize:'10px'}}>({Math.round(s.pct*100)}%)</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      };
+
+      // Compact table with left-accent color strip
+      const StatTable = ({ data, sortByCount=true, maxRows=10 }) => {
+        if(!data||Object.keys(data).length===0) return <span style={{color:'#94a3b8',fontSize:'11px'}}>Không có dữ liệu</span>;
+        const total = Object.values(data).reduce((s,v)=>s+v,0);
+        let entries = Object.entries(data);
+        if(sortByCount) entries.sort((a,b)=>b[1]-a[1]);
+        if(entries.length>maxRows) entries=entries.slice(0,maxRows);
+        const maxVal = Math.max(...entries.map(([,v])=>v));
+        const pal=['#3b82f6','#06b6d4','#10b981','#8b5cf6','#f59e0b','#ef4444','#ec4899','#0f766e','#b45309','#1e40af'];
+        return (
+          <div style={{display:'flex',flexDirection:'column',gap:'2px'}}>
+            {entries.map(([k,v],i)=>{
+              const pct=total>0?Math.round(v/total*100):0;
+              const barW=maxVal>0?Math.round(v/maxVal*100):0;
+              const color=pal[i%pal.length];
+              return (
+                <div key={k} style={{display:'grid',gridTemplateColumns:'1fr auto',alignItems:'center',gap:'6px',padding:'3px 6px',borderRadius:'5px',background:i%2===0?'#f8fafc':'white',border:'1px solid #f1f5f9'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'6px',minWidth:0}}>
+                    <div style={{width:'3px',height:'16px',borderRadius:'2px',background:color,flexShrink:0}}/>
+                    <span style={{fontSize:'11px',color:'#374151',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={k}>{k}</span>
+                    <div style={{flex:1,height:'4px',background:'#e2e8f0',borderRadius:'2px',overflow:'hidden',minWidth:'20px'}}>
+                      <div style={{width:barW+'%',height:'100%',background:color,borderRadius:'2px'}}/>
+                    </div>
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',gap:'4px',flexShrink:0}}>
+                    <span style={{fontWeight:700,fontSize:'12px',color:color}}>{v}</span>
+                    <span style={{fontSize:'10px',color:'#94a3b8',minWidth:'26px'}}>({pct}%)</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      };
+
+      // Age grid: badge per unique age value
+      const AgeGrid = ({ data }) => {
+        if(!data||Object.keys(data).length===0) return <span style={{color:'#94a3b8',fontSize:'11px'}}>Không có dữ liệu</span>;
+        const total = Object.values(data).reduce((s,v)=>s+v,0);
+        const entries = Object.entries(data).sort((a,b)=>{
+          const na=parseInt(a[0]); const nb=parseInt(b[0]);
+          return isNaN(na)?1:isNaN(nb)?-1:na-nb;
+        });
+        const maxVal = Math.max(...entries.map(([,v])=>v));
+        return (
+          <div style={{display:'flex',flexWrap:'wrap',gap:'4px'}}>
+            {entries.map(([k,v])=>{
+              const intensity = maxVal>0?v/maxVal:0;
+              // High intensity = dark blue bg + white text; low = light bg + dark text
+              const isDark = intensity > 0.45;
+              const bg = isDark
+                ? `rgba(30,58,138,${0.75+intensity*0.25})`
+                : `rgba(219,234,254,${0.5+intensity*0.8})`;
+              const numColor = isDark ? '#ffffff' : '#1e3a8a';
+              const lblColor = isDark ? 'rgba(255,255,255,0.85)' : '#1d4ed8';
+              const pctColor = isDark ? 'rgba(255,255,255,0.6)' : '#3b82f6';
+              const borderColor = isDark ? 'rgba(30,58,138,0.9)' : 'rgba(59,130,246,'+(0.3+intensity*0.4)+')';
+              return (
+                <div key={k} style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 8px',borderRadius:'6px',background:bg,border:'1px solid '+borderColor,minWidth:'44px'}}>
+                  <span style={{fontWeight:900,fontSize:'16px',color:numColor,lineHeight:1,textShadow:isDark?'0 1px 2px rgba(0,0,0,0.3)':'none'}}>{v}</span>
+                  <span style={{fontSize:'9px',color:lblColor,fontWeight:700,marginTop:'1px'}}>{k}</span>
+                  <span style={{fontSize:'9px',color:pctColor,fontWeight:500}}>{Math.round(v/total*100)}%</span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      };
+
+      // Pill group for categorical (location, etc.)
+      const PillGroup = ({ data, colors }) => {
+        if(!data||Object.keys(data).length===0) return <span style={{color:'#94a3b8',fontSize:'11px'}}>Không có dữ liệu</span>;
+        const entries=Object.entries(data).sort((a,b)=>b[1]-a[1]);
+        const total=entries.reduce((s,[,v])=>s+v,0);
+        const pal=colors||['#7c3aed','#0891b2','#059669','#d97706','#dc2626','#be185d','#1e40af'];
+        return (
+          <div style={{display:'flex',flexWrap:'wrap',gap:'4px'}}>
+            {entries.map(([k,v],i)=>(
+              <div key={k} style={{display:'inline-flex',alignItems:'center',gap:'4px',padding:'3px 9px',borderRadius:'99px',background:pal[i%pal.length]+'15',border:'1.5px solid '+pal[i%pal.length]+'40',fontSize:'11px',fontWeight:600,color:pal[i%pal.length]}}>
+                {k}: <b style={{fontSize:'12px'}}>{v}</b>
+                <span style={{opacity:0.65,fontWeight:400,fontSize:'10px'}}>({Math.round(v/total*100)}%)</span>
+              </div>
+            ))}
+          </div>
+        );
+      };
+
+      const SolvedBar = ({ solved }) => (
+        <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+          <div style={{flex:1,background:'#e2e8f0',borderRadius:'99px',height:'7px',overflow:'hidden'}}>
+            <div style={{width:solved+'%',height:'100%',background:solved>=70?'#059669':solved>=40?'#d97706':'#dc2626',borderRadius:'99px'}}/>
+          </div>
+          <span style={{fontWeight:700,fontSize:'12px',color:solved>=70?'#059669':solved>=40?'#d97706':'#dc2626',minWidth:'34px'}}>{solved}%</span>
+        </div>
+      );
+
+      return (
+        <div>
+          <div className="page-header" style={{marginBottom:'12px'}}>
+            <div className="page-title">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>
+              Thống Kê Chi Tiết Vụ Việc
+            </div>
+            {statsResult && (
+              <div style={{display:'flex',gap:'6px'}}>
+                <button className="btn btn-success btn-sm" onClick={exportExcel} disabled={!!exporting}>{exporting==='excel'?'⏳ Đang xuất...':'📥 Xuất Excel'}</button>
+                <button className="btn btn-primary btn-sm" onClick={exportWord} disabled={!!exporting}>{exporting==='word'?'⏳ Đang xuất...':'📄 Xuất Word'}</button>
+              </div>
+            )}
+          </div>
+
+          <div className="card" style={{marginBottom:'14px'}}>
+            <div className="card-header">⚙️ Cấu hình thống kê</div>
+            <div className="card-body" style={{paddingBottom:'12px'}}>
+              <div className="form-row" style={{marginBottom:'8px'}}>
+                <div className="form-group" style={{marginBottom:0}}>
+                  <label className="form-label">Loại xuất</label>
+                  <select className="form-control" value={statConfig.loaiXuat} onChange={e=>setStatConfig(c=>({...c,loaiXuat:e.target.value}))}>
+                    <option value="both">Tất cả (Tin báo + Vụ việc/Án)</option>
+                    <option value="tinbao">Chỉ Tin báo</option>
+                    <option value="vuviec">Chỉ Vụ việc / Vụ án</option>
+                  </select>
+                </div>
+                <div className="form-group" style={{marginBottom:0}}>
+                  <label className="form-label">Trạng thái</label>
+                  <select className="form-control" value={statConfig.trangThai} onChange={e=>setStatConfig(c=>({...c,trangThai:e.target.value}))}>
+                    <option value="all">Tất cả</option>
+                    <option value="dangxuly">Đang xử lý</option>
+                    <option value="hoanthanh">Đã hoàn thành</option>
+                  </select>
+                </div>
+              </div>
+              <div className="form-row" style={{marginBottom:'8px'}}>
+                <div className="form-group" style={{marginBottom:0}}>
+                  <label className="form-label">Từ ngày</label>
+                  <input type="text" ref={tuNgayRef} placeholder="dd/mm/yyyy" className="form-control" readOnly style={{cursor:'pointer'}}/>
+                </div>
+                <div className="form-group" style={{marginBottom:0}}>
+                  <label className="form-label">Đến ngày</label>
+                  <input type="text" ref={denNgayRef} placeholder="dd/mm/yyyy" className="form-control" readOnly style={{cursor:'pointer'}}/>
+                </div>
+              </div>
+              <div className="form-row" style={{marginBottom:'8px'}}>
+                <div className="form-group" style={{marginBottom:0}}>
+                  <label className="form-label">Phường thống kê</label>
+                  <input type="text" className="form-control" placeholder="VD: Tân Bình" value={statConfig.phuong} onChange={e=>setStatConfig(c=>({...c,phuong:e.target.value}))}/>
+                </div>
+                <div className="form-group" style={{marginBottom:0}}>
+                  <label className="form-label">Khu phố (phạm vi)</label>
+                  <input type="text" className="form-control" placeholder="VD: 1-39  hoặc  1-12, 14-20" value={statConfig.khuPhoRange} onChange={e=>setStatConfig(c=>({...c,khuPhoRange:e.target.value}))}/>
+                  {statConfig.khuPhoRange&&(()=>{const s=parseKhuPhoRange(statConfig.khuPhoRange);return(<div style={{fontSize:'11px',color:s?'#059669':'#dc2626',marginTop:'2px'}}>{s?'✓ Tổng: '+s.size+' khu phố':'⚠️ Định dạng không hợp lệ'}</div>);})()}
+                </div>
+              </div>
+              <div style={{display:'flex',gap:'8px',marginTop:'6px'}}>
+                <button className="btn btn-primary" onClick={computeStats} disabled={calculating}>{calculating?'⏳ Đang tính...':'📊 Tạo thống kê'}</button>
+                <button className="btn btn-gray" onClick={()=>{setStatsResult(null);setStatConfig({loaiXuat:'both',trangThai:'all',tuNgay:'',denNgay:'',phuong:'',khuPhoRange:''});if(tuNgayRef.current)tuNgayRef.current.value='';if(denNgayRef.current)denNgayRef.current.value='';}}>🔄 Đặt lại</button>
+              </div>
+            </div>
+          </div>
+
+          {statsResult && (() => {
+            const {groupStats,overallTotalCases,overallTotalObjs,overallKhoiTo,overallChuyen,overallSolved,kpTotal,phuong:ph}=statsResult;
+            const catCount=Object.keys(groupStats).length;
+            return (
+              <div>
+                {/* Summary KPI row */}
+                <div className="stats-grid" style={{marginBottom:'12px'}}>
+                  <div className="stat-card blue"><div className="stat-card-icon">📂</div><div className="stat-card-content"><div className="stat-card-value">{overallTotalCases}</div><div className="stat-card-label">Tổng vụ việc</div></div></div>
+                  <div className="stat-card green"><div className="stat-card-icon">👥</div><div className="stat-card-content"><div className="stat-card-value">{overallTotalObjs}</div><div className="stat-card-label">Tổng đối tượng</div></div></div>
+                  <div className="stat-card orange"><div className="stat-card-icon">⚖️</div><div className="stat-card-content"><div className="stat-card-value">{overallKhoiTo}</div><div className="stat-card-label">Đã khởi tố</div></div></div>
+                  <div className="stat-card" style={{background:'linear-gradient(135deg,#ccfbf1,#f0fdfa)',border:'1px solid #99f6e4'}}><div className="stat-card-icon">📤</div><div className="stat-card-content"><div className="stat-card-value" style={{color:'#0d9488'}}>{overallChuyen}</div><div className="stat-card-label">Chuyển hồ sơ</div></div></div>
+                  <div className="stat-card" style={{background:'linear-gradient(135deg,#ede9fe,#f5f3ff)',border:'1px solid #c4b5fd'}}><div className="stat-card-icon">🎯</div><div className="stat-card-content"><div className="stat-card-value" style={{color:'#7c3aed'}}>{overallSolved}%</div><div className="stat-card-label">Tỷ lệ khám phá</div></div></div>
+                </div>
+
+                {/* Overview distribution – only if multiple crime types */}
+                {catCount>1&&(
+                  <div className="card" style={{marginBottom:'12px'}}>
+                    <div className="card-header">📊 Phân bố theo loại vụ việc</div>
+                    <div className="card-body" style={{padding:'12px 16px'}}>
+                      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'8px'}}>
+                        {Object.entries(groupStats).sort((a,b)=>b[1].totalCases-a[1].totalCases).map(([cat,gs],i)=>{
+                          const pal=['#3b82f6','#10b981','#f59e0b','#8b5cf6','#ef4444','#06b6d4'];
+                          const color=pal[i%pal.length];
+                          const pct=overallTotalCases>0?Math.round(gs.totalCases/overallTotalCases*100):0;
+                          return(
+                            <div key={cat} style={{display:'flex',alignItems:'center',gap:'10px',padding:'8px 10px',background:color+'0d',border:'1.5px solid '+color+'30',borderRadius:'8px'}}>
+                              <div style={{width:'36px',height:'36px',borderRadius:'50%',background:color+'20',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                                <span style={{fontSize:'16px',fontWeight:800,color}}>{gs.totalCases}</span>
+                              </div>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{fontSize:'11px',fontWeight:700,color:'#1e293b',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={cat}>{cat}</div>
+                                <div style={{fontSize:'10px',color:'#64748b'}}>{gs.totalObjs} đối tượng · {pct}%</div>
+                                <div style={{height:'3px',background:'#e2e8f0',borderRadius:'2px',marginTop:'3px'}}>
+                                  <div style={{width:pct+'%',height:'100%',background:color,borderRadius:'2px'}}/>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Per crime type detail cards */}
+                {Object.entries(groupStats).sort((a,b)=>b[1].totalCases-a[1].totalCases).map(([cat,gs])=>(
+                  <div key={cat} className="card" style={{marginBottom:'12px'}}>
+                    <div className="card-header" style={{background:'linear-gradient(135deg,#1e3a8a,#1e40af)',color:'white'}}>
+                      {cat==='Ma túy'?'💊':cat==='Chưa phân loại'?'❓':'⚖️'} {cat}
+                      <span style={{marginLeft:'10px',background:'rgba(255,255,255,0.2)',padding:'2px 8px',borderRadius:'99px',fontSize:'11px'}}>{gs.totalCases} vụ · {gs.totalObjs} đối tượng</span>
+                    </div>
+                    <div className="card-body" style={{padding:'12px 14px'}}>
+
+                      {/* Row 1: 5 KPI mini blocks */}
+                      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'8px',marginBottom:'12px'}}>
+                        <div style={{background:'#eff6ff',borderRadius:'7px',padding:'8px 10px',border:'1px solid #bfdbfe',textAlign:'center'}}>
+                          <div style={{fontSize:'20px',fontWeight:800,color:'#1e3a8a'}}>{gs.totalCases}</div>
+                          <div style={{fontSize:'10px',color:'#64748b',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.3px'}}>Số vụ</div>
+                          <div style={{fontSize:'10px',color:'#1d4ed8',marginTop:'1px'}}>Khởi tố: {gs.khoiToCount}</div>
+                        </div>
+                        <div style={{background:'#f0fdf4',borderRadius:'7px',padding:'8px 10px',border:'1px solid #86efac',textAlign:'center'}}>
+                          <div style={{fontSize:'20px',fontWeight:800,color:'#14532d'}}>{gs.totalObjs}</div>
+                          <div style={{fontSize:'10px',color:'#64748b',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.3px'}}>Đối tượng</div>
+                          <div style={{fontSize:'10px',color:'#15803d',marginTop:'1px'}}>Địa bàn: {gs.diaBanCount}</div>
+                        </div>
+                        <div style={{background:'#fefce8',borderRadius:'7px',padding:'8px 10px',border:'1px solid #fde047'}}>
+                          <div style={{fontSize:'10px',color:'#854d0e',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.3px',marginBottom:'4px'}}>Tỷ lệ khám phá</div>
+                          <SolvedBar solved={gs.solved}/>
+                          <div style={{fontSize:'10px',color:'#92400e',marginTop:'3px'}}>{gs.khoiToCount}/{gs.totalCases} vụ khởi tố</div>
+                        </div>
+                        <div style={{background:'#f0fdfa',borderRadius:'7px',padding:'8px 10px',border:'1px solid #99f6e4',textAlign:'center'}}>
+                          <div style={{fontSize:'20px',fontWeight:800,color:'#134e4a'}}>{gs.chuyenCount}</div>
+                          <div style={{fontSize:'10px',color:'#64748b',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.3px'}}>Chuyển hồ sơ</div>
+                          <div style={{fontSize:'10px',color:'#0d9488',marginTop:'1px'}}>{gs.totalCases>0?Math.round(gs.chuyenCount/gs.totalCases*100):0}% tổng vụ</div>
+                        </div>
+                        <div style={{background:'#faf5ff',borderRadius:'7px',padding:'8px 10px',border:'1px solid #d8b4fe',textAlign:'center'}}>
+                          <div style={{fontSize:'20px',fontWeight:800,color:'#581c87'}}>{gs.diaBanCount}</div>
+                          <div style={{fontSize:'10px',color:'#64748b',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.3px'}}>Trên địa bàn</div>
+                          <div style={{fontSize:'10px',color:'#7c3aed',marginTop:'1px'}}>Địa bàn khác: {gs.diaBanKhac}</div>
+                        </div>
+                      </div>
+
+                      {/* Row 2: 3-column analytics grid */}
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'10px'}}>
+
+                        {/* Cell 1: Gender pills */}
+                        {Object.keys(gs.genderCount).length>0&&(
+                          <div style={{background:'#f8fafc',borderRadius:'8px',padding:'10px 12px',border:'1px solid #e2e8f0'}}>
+                            <div style={{fontSize:'10px',fontWeight:700,color:'#475569',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>👤 Giới tính</div>
+                            <PillGroup data={gs.genderCount} colors={['#1e40af','#be185d','#059669']}/>
+                          </div>
+                        )}
+
+                        {/* Cell 2: Location pills */}
+                        {Object.keys(gs.locCount).length>0&&(
+                          <div style={{background:'#f8fafc',borderRadius:'8px',padding:'10px 12px',border:'1px solid #e2e8f0'}}>
+                            <div style={{fontSize:'10px',fontWeight:700,color:'#475569',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>📍 Nơi xảy ra</div>
+                            <PillGroup data={gs.locCount} colors={['#7c3aed','#0891b2','#059669','#d97706','#dc2626','#be185d']}/>
+                          </div>
+                        )}
+
+                        {/* Cell 3: Địa bàn khu phố pills */}
+                        {Object.keys(gs.kpCount).length>0&&(
+                          <div style={{background:'#f8fafc',borderRadius:'8px',padding:'10px 12px',border:'1px solid #e2e8f0'}}>
+                            <div style={{fontSize:'10px',fontWeight:700,color:'#475569',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>🏘️ Nơi ở {ph?'(p.'+ph+')':'(khu phố)'}</div>
+                            <PillGroup data={gs.kpCount} colors={['#1e40af','#0891b2','#059669','#7c3aed','#94a3b8','#64748b']}/>
+                          </div>
+                        )}
+
+                        {/* Cell 4: Education compact table */}
+                        {Object.keys(gs.eduCount).length>0&&(
+                          <div style={{background:'#f8fafc',borderRadius:'8px',padding:'10px 12px',border:'1px solid #e2e8f0'}}>
+                            <div style={{fontSize:'10px',fontWeight:700,color:'#475569',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>📚 Trình độ học vấn</div>
+                            <StatTable data={gs.eduCount}/>
+                          </div>
+                        )}
+
+                        {/* Cell 5+6: Age badges (span 2) */}
+                        {Object.keys(gs.ageCount).length>0&&(
+                          <div style={{background:'#f8fafc',borderRadius:'8px',padding:'10px 12px',border:'1px solid #e2e8f0',gridColumn:'span 2'}}>
+                            <div style={{fontSize:'10px',fontWeight:700,color:'#475569',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>🎂 Độ tuổi đối tượng <span style={{fontWeight:400,fontSize:'9px',color:'#94a3b8'}}>(tính theo ngày sinh thực tế)</span></div>
+                            <AgeGrid data={gs.ageCount}/>
+                          </div>
+                        )}
+
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {Object.keys(groupStats).length===0&&(
+                  <div style={{textAlign:'center',padding:'40px',color:'#94a3b8',background:'white',borderRadius:'10px',border:'1px solid #e2e8f0'}}>
+                    <div style={{fontSize:'36px',marginBottom:'8px'}}>📭</div>
+                    <div style={{fontWeight:600}}>Không có dữ liệu phù hợp</div>
+                    <div style={{fontSize:'12px',marginTop:'4px'}}>Thử thay đổi khoảng ngày hoặc loại thống kê</div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      );
+    };
+
+
     // ==================== WORD EXPORT MODAL ====================
     const WordExportModal = ({ cases, onClose, addToast }) => {
       const [selectedCaseId, setSelectedCaseId] = React.useState('');
@@ -3025,6 +3694,13 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const [ghLoading, setGhLoading] = React.useState(false);
       const [ghError, setGhError] = React.useState('');
       const [ghFolder, setGhFolder] = React.useState('');
+
+      // Auto-connect GitHub when library tab is opened and repo is saved
+      React.useEffect(() => {
+        if (activeTab === 'library' && ghRepo && ghFiles.length === 0 && !ghLoading && !ghError) {
+          loadGhFiles(ghRepo, ghFolder);
+        }
+      }, [activeTab]);
 
       // Parse GitHub repo URL → API URL
       const parseGhUrl = (url) => {
@@ -3228,7 +3904,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                     />
                     <button className="btn btn-primary btn-sm" onClick={saveGhRepo} style={{whiteSpace:'nowrap'}}>🔗 Kết nối</button>
                   </div>
-                  {ghRepo && <div style={{fontSize:'11px',color:'#0369a1',marginTop:'4px'}}>✓ Repo: {ghRepo}</div>}
+                  {ghRepo && <div style={{fontSize:'11px',color:'#0369a1',marginTop:'4px'}}>✓ Đã lưu — Tự động kết nối: <b>{ghRepo}</b></div>}
+                  {!ghRepo && <div style={{fontSize:'11px',color:'#94a3b8',marginTop:'4px'}}>💡 Nhập link một lần, ứng dụng sẽ tự nhớ và kết nối lần sau</div>}
                 </div>
 
                 {ghLoading && <div style={{textAlign:'center',padding:'20px',color:'#64748b'}}>⏳ Đang tải danh sách từ GitHub...</div>}
@@ -7947,6 +8624,13 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 Báo cáo
               </button>
               <button
+                className={`sidebar-btn ${viewMode === 'statistics' ? 'active' : ''}`}
+                onClick={() => { setShowForm(false); setShowObjectForm(false); setViewMode('statistics'); }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>
+                Thống Kê Chi Tiết
+              </button>
+              <button
                 className={`sidebar-btn ${viewMode === 'tinhHan' ? 'active' : ''}`}
                 onClick={() => { setShowForm(false); setShowObjectForm(false); setViewMode('tinhHan'); }}
               >
@@ -8109,6 +8793,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               />
             ) : viewMode === 'tinhHan' ? (
               <TinhHanComponent cases={cases} />
+            ) : viewMode === 'statistics' ? (
+              <StatisticsView cases={cases} />
             ) : viewMode === 'report' ? (
               <div>
                 <div className="page-header">
