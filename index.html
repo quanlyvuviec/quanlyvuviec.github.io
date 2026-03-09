@@ -15,8 +15,8 @@
   <script src="./libs/babel.min.js" defer data-warnings="none"></script>
   <script src="./libs/docx.min.js" defer></script>
   <script src="./libs/FileSaver.min.js" defer></script>
-  <script src="./libs/mammoth.browser.min.js" defer></script>
-  <script src="./libs/jszip.min.js" defer></script>
+  <script src="/libs/mammoth.browser.min.js" defer></script>
+  <script src="/libs/jszip.min.js" defer></script>
   <script src="./libs/xlsx.full.min.js" defer></script>
   <script src="./libs/flatpickr.min.js" defer></script>
   <style>
@@ -1316,6 +1316,36 @@
       filtered = filtered.filter(c => (c.id||'').toLowerCase().includes(filterCaseId.toLowerCase().trim()));
     if (filterStartDate) filtered = filtered.filter(c => c.dateReceived >= filterStartDate);
     if (filterEndDate)   filtered = filtered.filter(c => c.dateReceived <= filterEndDate);
+
+    // ── Chế độ Tóm Tắt ────────────────────────────────────────────────────
+    if (statusFilter === 'tomtat') {
+      const wb2 = XLSX.utils.book_new();
+      const fmtL = (d) => DateUtils.formatToVietnamese(d) || '';
+      const hdrColor = '1D4ED8';
+      const brd = () => ({top:{style:'thin',color:{rgb:'CBD5E1'}},bottom:{style:'thin',color:{rgb:'CBD5E1'}},left:{style:'thin',color:{rgb:'CBD5E1'}},right:{style:'thin',color:{rgb:'CBD5E1'}}});
+      const sH = { font:{bold:true,color:{rgb:'FFFFFF'},sz:10}, fill:{fgColor:{rgb:hdrColor},type:'pattern',patternType:'solid'}, alignment:{horizontal:'center',vertical:'center',wrapText:true}, border:brd() };
+      const sR = (even) => ({ font:{sz:9,color:{rgb:'1E293B'}}, fill:{fgColor:{rgb:even?'EFF6FF':'FFFFFF'},type:'pattern',patternType:'solid'}, alignment:{vertical:'top',wrapText:true}, border:brd() });
+      const tomtatHeaders = ['STT','Ngày tiếp nhận','Loại vụ việc','Nội dung vụ việc','Đối tượng','Kết quả giải quyết','Người thụ lý chính','Người trực tiếp làm'];
+      const tomtatRows = filtered.map((c, idx) => {
+        const objStr = (c.objects||[]).map(o => o.lyLichGon || o.name || '').filter(Boolean).join(';\n');
+        const ketQua = c.investigationResult === 'tin báo' && c.tinBaoKetQua
+          ? 'Tin báo – KQ: ' + c.tinBaoKetQua
+          : c.investigationResult || '';
+        return [idx+1, fmtL(c.dateReceived), Array.isArray(c.type)?c.type.join(', '):(c.type||''), c.description||'', objStr, ketQua, c.assignee||'', c.directAssignee||''];
+      });
+      const wsTT = XLSX.utils.aoa_to_sheet([tomtatHeaders, ...tomtatRows]);
+      tomtatHeaders.forEach((_, ci) => { const k = XLSX.utils.encode_cell({r:0,c:ci}); if(!wsTT[k])wsTT[k]={v:tomtatHeaders[ci],t:'s'}; wsTT[k].s=sH; });
+      for(let ri=1;ri<=tomtatRows.length;ri++){const even=ri%2===0;for(let ci=0;ci<tomtatHeaders.length;ci++){const k=XLSX.utils.encode_cell({r:ri,c:ci});if(!wsTT[k])wsTT[k]={v:'',t:'s'};wsTT[k].s=sR(even);}}
+      wsTT['!cols'] = [{wch:5},{wch:14},{wch:28},{wch:45},{wch:35},{wch:30},{wch:20},{wch:20}];
+      wsTT['!freeze'] = {xSplit:0, ySplit:1};
+      wsTT['!rows'] = [{hpt:30}, ...tomtatRows.map(()=>({hpt:55}))];
+      XLSX.utils.book_append_sheet(wb2, wsTT, 'Tóm Tắt Vụ Việc');
+      const now2 = new Date();
+      const dateStr2 = `${now2.getDate().toString().padStart(2,'0')}-${(now2.getMonth()+1).toString().padStart(2,'0')}-${now2.getFullYear()}`;
+      XLSX.writeFile(wb2, `TomTatVuViec_${dateStr2}.xlsx`);
+      return null;
+    }
+
     if (statusFilter === 'ongoing')    filtered = filtered.filter(c => c.status !== 'hoàn thành');
     else if (statusFilter === 'completed') filtered = filtered.filter(c => c.status === 'hoàn thành');
     else if (statusFilter === 'tinbao')    filtered = filtered.filter(c => (c.phanLoaiTin||'').toLowerCase()==='tin báo'||(c.investigationResult||'').toLowerCase()==='tin báo');
@@ -1408,10 +1438,13 @@
 
     const caseRows = filtered.map((c, idx) => {
       const objNames = (c.objects||[]).map(o => o.name||'').filter(Boolean).join('; ');
+      const ketQuaDieuTra = c.investigationResult === 'tin báo' && c.tinBaoKetQua
+        ? c.investigationResult + ' – KQ: ' + c.tinBaoKetQua
+        : c.investigationResult || '';
       return [idx+1, c.id||'', c.phanLoaiTin||'',
         Array.isArray(c.type)?c.type.join(', '):(c.type||''),
         fmt(c.dateReceived), c.description||'', c.seizedItems||'',
-        c.assignee||'', c.directAssignee||'', c.investigationResult||'',
+        c.assignee||'', c.directAssignee||'', ketQuaDieuTra,
         c.crimeType||'', c.extensionCount||0,
         fmt(c.investigationConclusionDate), fmt(c.prosecutionDate), c.prosecutionDecision||'',
         fmt(c.penaltyDate), c.penaltyDecision||'', fmt(c.transferDate), c.receivingUnit||'',
@@ -1719,20 +1752,27 @@ function backupCases(cases) {
     // =========================================================
 const parseWordDocClientSide = async (file) => {
   if (!file) return null;
+  // Validate file type
+  if (!file.name.toLowerCase().endsWith('.docx')) {
+    return { error: 'Vui lòng chọn file .docx' };
+  }
   try {
     const arrayBuffer = await file.arrayBuffer();
     let result;
     if (typeof mammoth !== 'undefined') {
       result = await mammoth.extractRawText({ arrayBuffer });
-    } else {
+    } else if (typeof JSZip !== 'undefined') {
       // fallback: use JSZip to read docx XML
       const zip = await JSZip.loadAsync(arrayBuffer);
       const docXml = await zip.file('word/document.xml').async('text');
       const tmp = document.createElement('div');
       tmp.innerHTML = docXml.replace(/<w:t[^>]*>/g,'').replace(/<\/w:t>/g,' ').replace(/<[^>]+>/g,'');
       result = { value: tmp.textContent };
+    } else {
+      return { error: 'Thư viện đọc file Word chưa tải xong. Vui lòng thử lại.' };
     }
     const text = result.value || '';
+    if (!text.trim()) return { error: 'File Word không có nội dung text.' };
     return parseVietnameseBioText(text);
   } catch(e) {
     console.error('Word parse error:', e);
@@ -2128,6 +2168,9 @@ const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjInd
       '{ngay_hom_nay_short}': fmtDateShort(new Date().toISOString().split('T')[0]),
       '{phan_loai_tin}': caseObj.phanLoaiTin || '',
       '{ket_qua_dieu_tra}': caseObj.investigationResult || '',
+      '{ket_qua_xu_ly_tin_bao}': caseObj.tinBaoKetQua || '',
+      '{ngay_ket_thuc_xu_ly_tin_bao}': fmtDateVN(caseObj.tinBaoNgayKetThuc),
+      '{ngay_ket_thuc_xu_ly_tin_bao_short}': fmtDateShort(caseObj.tinBaoNgayKetThuc),
       '{loai_toi_pham_vu}': caseObj.crimeType || '',
       '{ngay_khoi_to_vu_an}': fmtDateVN(caseObj.prosecutionDate),
       '{ngay_khoi_to_vu_an_short}': fmtDateShort(caseObj.prosecutionDate),
@@ -2587,7 +2630,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       "Cục cảnh sát QLHC về TTXH",
       "Bộ công an"
     ];
-    const handlingMethods = ["xử phạt hành chính", "khởi tố bị can"];
+    const handlingMethods = ["xử phạt hành chính", "khởi tố bị can", "KHÁC"];
     const investigationResults = ["khởi tố vụ án", "xử phạt hành chính", "tin báo", "Chuyển hồ sơ"];
     const crimeTypes = [
       "Tội phạm ít nghiêm trọng",
@@ -4515,14 +4558,29 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         if (!file) return;
         setWordImporting(true);
         parseWordDocClientSide(file).then(function(result) {
-          if (result && result.data && Object.keys(result.data).length > 0) {
+          if (!result) {
+            setErrorMessage('⚠️ Không đọc được file Word.');
+            setWordImporting(false);
+            if (wordImportRef.current) wordImportRef.current.value = '';
+            return;
+          }
+          if (result.error) {
+            setErrorMessage('❌ ' + result.error);
+            setWordImporting(false);
+            if (wordImportRef.current) wordImportRef.current.value = '';
+            return;
+          }
+          if (result.data && Object.keys(result.data).length > 0) {
             setObjectData(function(prev){ return Object.assign({}, prev, result.data); });
             const DATE_FIELDS = ['birthDate','issueDate','invitationDate','ngayChuyen','reportDate','decisionDate','prosecutionDateObj','custodyDecisionDate','detentionDecisionDate'];
+            // Use a slightly longer timeout to ensure Flatpickr useEffect has re-run
             setTimeout(function() {
               DATE_FIELDS.forEach(function(f) {
-                if (result.data[f]) FlatpickrManager.update(f, result.data[f]);
+                if (result.data[f]) {
+                  try { FlatpickrManager.update(f, result.data[f]); } catch(e) {}
+                }
               });
-            }, 100);
+            }, 300);
             const filled = Object.keys(result.data).length;
             const warns = result.warnings || [];
             let msg = '✅ Đã nhập ' + filled + ' trường từ file Word!';
@@ -5124,6 +5182,22 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               {renderUndoButton('handlingMethod')}
             </div>
             
+            {objectData.handlingMethod === 'KHÁC' && (
+              <div className="flex items-center" style={{marginBottom:'10px'}}>
+                <div className="flex-1">
+                  <label className="form-label">Kết quả xử lý đối tượng (KHÁC)</label>
+                  <textarea
+                    name="handlingMethodKhac"
+                    value={objectData.handlingMethodKhac || ''}
+                    onChange={handleObjectInputChange}
+                    className="form-control"
+                    rows={2}
+                    placeholder="Nhập kết quả xử lý đối tượng..."
+                  />
+                </div>
+              </div>
+            )}
+            
             {showHandlingDetails && objectData.handlingMethod === 'xử phạt hành chính' && (
               <div style={{marginTop:'10px', padding:'10px', background:'#ecfdf5', borderRadius:'6px', border:'1px solid #6ee7b7'}}>
                 <div style={{fontWeight:600, color:'#065f46', fontSize:'12px', marginBottom:'8px'}}>📋 XỬ PHẠT HÀNH CHÍNH</div>
@@ -5510,6 +5584,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const penaltyDateRef = useRef(null);
       const transferDateRef = useRef(null);
       const reportDateRef = useRef(null);
+      const tinBaoNgayKetThucRef = useRef(null);
       
       // Auto-calculate investigation expiration date
       useEffect(() => {
@@ -5587,6 +5662,12 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             caseData.reportDate,
             (dateStr) => handleInputChange({ target: { name: 'reportDate', value: dateStr } })
           );
+          FlatpickrManager.create(
+            tinBaoNgayKetThucRef,
+            'tinBaoNgayKetThuc',
+            caseData.tinBaoNgayKetThuc,
+            (dateStr) => handleInputChange({ target: { name: 'tinBaoNgayKetThuc', value: dateStr } })
+          );
         }
         
         if (caseData.investigationResult === 'Chuyển hồ sơ') {
@@ -5618,7 +5699,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             if (!newCaseData.expirationDate) {
               newCaseData.expirationDate = DateUtils.addMonths(DateUtils.parseFromVietnamese(value), 4);
             }
-          } else if (['dateReceived', 'investigationConclusionDate', 'prosecutionDate', 'penaltyDate', 'transferDate', 'ngayKetThuc'].includes(name)) {
+          } else if (['dateReceived', 'investigationConclusionDate', 'prosecutionDate', 'penaltyDate', 'transferDate', 'ngayKetThuc', 'tinBaoNgayKetThuc'].includes(name)) {
             newCaseData = { ...prev, [name]: DateUtils.parseFromVietnamese(value) };
           } else {
             newCaseData = { ...prev, [name]: value };
@@ -5750,7 +5831,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             prosecutionDecision: '', penaltyDate: '', penaltyDecision: '',
             transferDate: '', receivingUnit: '', status: 'đang thực hiện',
             reportDate: '', expirationDate: '', notes: '', objects: [],
-            phanLoaiTin: '', noixayra: ''
+            phanLoaiTin: '', noixayra: '', tinBaoKetQua: '', tinBaoNgayKetThuc: ''
           });
           setTempObjects([]);
           setShowForm(false);
@@ -6152,29 +6233,69 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             
             {caseData.investigationResult === 'tin báo' && (
               <>
-                <div>
-                  <label className="form-label">Ngày lên tin báo</label>
-                  <input
-                    type="text"
-                    ref={reportDateRef}
-                    name="reportDate"
-                    placeholder="dd/mm/yyyy"
-                    className="form-control"
-                    readOnly={!isEditing}
-                  />
+                {/* Hàng 1: Kết quả điều tra + Ngày lên tin báo + Ngày hết hạn tin báo */}
+                <div style={{gridColumn:'1/-1', display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'10px'}}>
+                  <div>
+                    <label className="form-label" style={{color:'#7c3aed',fontWeight:700}}>Kết quả điều tra</label>
+                    <div style={{padding:'7px 11px', background:'#ede9fe', borderRadius:'7px', fontSize:'13px', color:'#5b21b6', fontWeight:600}}>Tin báo</div>
+                  </div>
+                  <div>
+                    <label className="form-label">Ngày lên tin báo</label>
+                    <input
+                      type="text"
+                      ref={reportDateRef}
+                      name="reportDate"
+                      placeholder="dd/mm/yyyy"
+                      className="form-control"
+                      readOnly={!isEditing}
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">Ngày hết hạn tin báo</label>
+                    <input
+                      type="text"
+                      name="expirationDate"
+                      value={DateUtils.formatToVietnamese(caseData.expirationDate) || ''}
+                      onChange={handleInputChange}
+                      placeholder="dd/mm/yyyy"
+                      className="form-control"
+                      readOnly={!isEditing}
+                    />
+                  </div>
                 </div>
-                
-                <div>
-                  <label className="form-label">Ngày hết hạn tin báo</label>
-                  <input
-                    type="text"
-                    name="expirationDate"
-                    value={DateUtils.formatToVietnamese(caseData.expirationDate) || ''}
-                    onChange={handleInputChange}
-                    placeholder="dd/mm/yyyy"
-                    className="form-control"
-                    readOnly={!isEditing}
-                  />
+                {/* Hàng 2: Kết quả xử lý tin báo + Ngày kết thúc xử lý tin báo */}
+                <div style={{gridColumn:'1/-1', display:'grid', gridTemplateColumns:'2fr 1fr', gap:'10px', marginTop:'4px'}}>
+                  <div>
+                    <label className="form-label">Kết quả xử lý tin báo</label>
+                    <textarea
+                      name="tinBaoKetQua"
+                      value={caseData.tinBaoKetQua || ''}
+                      onChange={handleInputChange}
+                      placeholder="Nhập kết quả xử lý tin báo..."
+                      className="form-control"
+                      rows={2}
+                      disabled={!isEditing}
+                    />
+                  </div>
+                  <div>
+                    <label className={`form-label${caseData.tinBaoNgayKetThuc ? ' label-filled' : ''}`}>Ngày kết thúc xử lý tin báo</label>
+                    <div style={{display:'flex', gap:'4px', alignItems:'center'}}>
+                      <input
+                        type="text"
+                        ref={tinBaoNgayKetThucRef}
+                        name="tinBaoNgayKetThuc"
+                        placeholder="dd/mm/yyyy"
+                        className="form-control"
+                        readOnly={!isEditing}
+                      />
+                      {isEditing && caseData.tinBaoNgayKetThuc && (
+                        <button type="button" className="btn btn-danger btn-xs" title="Xóa ngày"
+                          onClick={() => { setCaseData(prev => ({...prev, tinBaoNgayKetThuc: ''})); if(tinBaoNgayKetThucRef.current) tinBaoNgayKetThucRef.current.value = ''; }}>
+                          🗑️
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </>
             )}
@@ -8442,7 +8563,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                       cellC([TNR('')]),
                     ]}),
                     new TableRow({children:[
-                      cellL([TNRb('- Vụ án đã kết thúc')]),
+                      cellL([TNRb('- Vụ việc đã kết thúc')]),
                       cellC([TNR(filteredCases.filter(c=>c.status==='hoàn thành').length.toString())]),
                       cellC([TNR('')]),
                     ]}),
@@ -8614,7 +8735,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 onClick={() => { setShowForm(false); setShowObjectForm(false); setViewMode('completed'); }}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
-                Vụ án đã kết thúc
+                Vụ việc đã kết thúc
               </button>
               <button
                 className={`sidebar-btn ${viewMode === 'report' ? 'active' : ''}`}
@@ -9020,7 +9141,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                     <div className="page-header" style={{marginBottom: '12px'}}>
                       <div className="page-title">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
-                        Danh Sách Vụ Án Đã Kết Thúc
+                        Danh Sách Vụ Việc Đã Kết Thúc
                         <span className="badge badge-done">{cases.filter(c => c.status === 'hoàn thành').length} vụ</span>
                       </div>
                     </div>
@@ -9128,6 +9249,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                     <option value="completed">Đã hoàn thành</option>
                     <option value="tinbao">Tin báo</option>
                     <option value="vuviec">Vụ việc / Vụ án (không phải tin báo)</option>
+                    <option value="tomtat">Tóm tắt (STT, Ngày tiếp nhận, Loại VV, Nội dung, Đối tượng, KQ giải quyết, Thụ lý)</option>
                   </select>
                 </div>
                 <div className="form-group">
@@ -9146,7 +9268,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   </div>
                 </div>
                 <div style={{background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:'8px',padding:'10px',fontSize:'12px',color:'#0369a1',marginTop:'8px'}}>
-                  💡 File Excel gồm 3 sheet: <strong>Tổng hợp</strong> (thống kê), <strong>Vụ Việc</strong> (chi tiết), <strong>Đối Tượng</strong> (danh sách).
+                  💡 File Excel gồm 3 sheet: <strong>Tổng hợp</strong> (thống kê), <strong>Vụ Việc</strong> (chi tiết), <strong>Đối Tượng</strong> (danh sách).<br/>
+                  📋 Chọn <strong>"Tóm tắt"</strong> để xuất file 1 sheet gọn với các cột: STT, Ngày tiếp nhận, Loại VV, Nội dung, Đối tượng, KQ giải quyết, Người thụ lý, Người trực tiếp làm.
                 </div>
               </div>
               <div className="modal-footer">
