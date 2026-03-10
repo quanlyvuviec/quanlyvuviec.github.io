@@ -15,8 +15,8 @@
   <script src="./libs/babel.min.js" defer data-warnings="none"></script>
   <script src="./libs/docx.min.js" defer></script>
   <script src="./libs/FileSaver.min.js" defer></script>
-  <script src="/libs/mammoth.browser.min.js" defer></script>
-  <script src="/libs/jszip.min.js" defer></script>
+  <script src="./libs/mammoth.browser.min.js" defer></script>
+  <script src="./libs/jszip.min.js" defer></script>
   <script src="./libs/xlsx.full.min.js" defer></script>
   <script src="./libs/flatpickr.min.js" defer></script>
   <style>
@@ -752,6 +752,26 @@
     }
 
     .ly-lich-auto { background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 8px 10px; font-size: 12px; color: #15803d; margin-top: 4px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+    /* === SECURE FIELD VISUAL HINTS === */
+    input.secure-field-filled {
+      border-color: #f97316 !important;
+      background: linear-gradient(to right, #fff, #fff7ed) !important;
+    }
+    input.secure-field-filled:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px #fdba7480;
+    }
+    .secure-lock-badge {
+      position: absolute; right: 8px; top: 50%;
+      transform: translateY(-50%);
+      font-size: 13px; pointer-events: none; user-select: none;
+      z-index: 2;
+    }
+    .secure-field-wrap {
+      position: relative; display: flex; align-items: center;
+    }
+    .secure-field-wrap input { padding-right: 30px !important; }
   </style>
 </head>
 <body>
@@ -759,10 +779,11 @@
   <script type="text/javascript">
     // ==================== CONSTANTS ====================
     const DB_NAME = 'CaseManagementDB';
-    const DB_VERSION = 4;
+    const DB_VERSION = 5;
     const CASES_STORE = 'cases';
     const USERS_STORE = 'users';
     const LISTS_STORE = 'lists';
+    const AUDIT_STORE = 'auditLogs';
     const IDLE_TIMEOUT = 30 * 60 * 1000;
 
     // ===== FIREBASE CONFIG – ĐIỀN THÔNG TIN CỦA BẠN VÀO ĐÂY =====
@@ -832,6 +853,11 @@
           }
           if (!db.objectStoreNames.contains(USERS_STORE)) db.createObjectStore(USERS_STORE, { keyPath: 'username' });
           if (!db.objectStoreNames.contains(LISTS_STORE)) db.createObjectStore(LISTS_STORE, { keyPath: 'key' });
+          if (!db.objectStoreNames.contains(AUDIT_STORE)) {
+            const auditStore = db.createObjectStore(AUDIT_STORE, { autoIncrement: true });
+            auditStore.createIndex('timestamp', 'timestamp', { unique: false });
+            auditStore.createIndex('action', 'action', { unique: false });
+          }
         };
         request.onsuccess = (e) => { db = e.target.result; resolve(db); };
         request.onerror = (e) => reject(e.target.error);
@@ -894,7 +920,9 @@
     }
 
     // ==================== FIRESTORE LAYER ====================
-    // Strip photos from objects before saving to Firestore (size limit + security)
+
+    // Strip photos from objects before writing to Firestore main 'cases' collection.
+    // Photos are stored separately in the 'photos' collection.
     function stripPhotosForCloud(cases) {
       return cases.map(c => ({
         ...c,
@@ -905,87 +933,77 @@
       }));
     }
 
-    // Save photos separately to Firestore 'photos' collection
-    // FIXED: Always write all photo fields (even empty strings) so photo deletions are persisted.
-    // Previously, deleted photos (empty string) were never written, so old photos would re-appear on refresh.
+    // Build a flat photo map from a cases array.
+    // key = "caseId_objIndex"  value = { photo, photoLeft, photoRight }
+    function _buildLocalPhotoMap(cases) {
+      const map = {};
+      (cases || []).forEach(c => {
+        (c.objects || []).forEach((obj, i) => {
+          map[c.id + '_' + i] = {
+            photo:      obj.photo      || '',
+            photoLeft:  obj.photoLeft  || '',
+            photoRight: obj.photoRight || '',
+          };
+        });
+      });
+      return map;
+    }
+
+    // Inject photos from two sources (cloud + local) into metadata-only cases.
+    //
+    // Priority per photo field:
+    //   A. cloudPhotoMap[key] exists AND has _savedAt  → cloud is authoritative
+    //      (empty + _savedAt = user explicitly deleted → respect it)
+    //   B. cloudPhotoMap[key] exists but NO _savedAt   → legacy doc, prefer non-empty
+    //      (cloud empty might mean "not synced yet", so fall back to local)
+    //   C. cloudPhotoMap[key] missing entirely         → use local (offline / not yet synced)
+    //   D. Neither source                              → empty string
+    function _injectPhotos(metaCases, cloudPhotoMap, localPhotoMap) {
+      const cp = cloudPhotoMap || {};
+      const lp = localPhotoMap || {};
+      return metaCases.map(c => ({
+        ...c,
+        objects: (c.objects || []).map((obj, i) => {
+          const key = c.id + '_' + i;
+          const cd  = cp[key];
+          const ld  = lp[key];
+          const resolve = (f) => {
+            if (cd && cd._savedAt) return cd[f];                    // A: authoritative
+            if (cd)                return cd[f] || (ld ? ld[f] : ''); // B: legacy, non-empty wins
+            return ld ? ld[f] : '';                                  // C/D: local or empty
+          };
+          return {
+            ...obj,
+            photo:      resolve('photo'),
+            photoLeft:  resolve('photoLeft'),
+            photoRight: resolve('photoRight'),
+          };
+        })
+      }));
+    }
+
+    // Save photos to Firestore 'photos' collection.
+    // Uses set() WITHOUT merge so empty string = explicit deletion.
+    // Includes _savedAt timestamp so the merge logic can use Priority A.
     async function _firestoreSavePhotos(cases) {
       if (!firestoreDB) return;
-      for (let _ci = 0; _ci < cases.length; _ci++) {
-        const c = cases[_ci];
+      const now = new Date().toISOString();
+      for (let ci = 0; ci < cases.length; ci++) {
+        const c = cases[ci];
         if (!c.objects || c.objects.length === 0) continue;
         for (let i = 0; i < c.objects.length; i++) {
           const obj = c.objects[i];
-          // Normalize: only keep base64 data URIs, otherwise store empty string
           const photo      = (obj.photo||'').startsWith('data:')      ? obj.photo      : '';
           const photoLeft  = (obj.photoLeft||'').startsWith('data:')  ? obj.photoLeft  : '';
           const photoRight = (obj.photoRight||'').startsWith('data:') ? obj.photoRight : '';
           try {
-            // Use set() WITHOUT merge so empty strings explicitly overwrite old data (handles deletion)
-            const payload = { caseId: c.id, objIndex: i, photo, photoLeft, photoRight };
-            await firestoreDB.collection('photos').doc(c.id + '_' + i).set(payload);
+            await firestoreDB.collection('photos').doc(c.id + '_' + i).set({
+              caseId: c.id, objIndex: i,
+              photo, photoLeft, photoRight,
+              _savedAt: now   // timestamp used by _injectPhotos Priority A
+            });
           } catch(e) { console.warn('[Firebase] Photo save failed:', e.message); }
         }
-      }
-    }
-
-    // Load photos from Firestore 'photos' collection and merge into cases
-    async function _firestoreLoadPhotos(cases) {
-      if (!firestoreDB) return cases;
-      try {
-        const snap = await firestoreDB.collection('photos').get();
-        const photoMap = {};
-        snap.docs.forEach(d => {
-          const data = d.data();
-          const key = `${data.caseId}_${data.objIndex}`;
-          // Store exactly what Firestore has (including empty string = user deleted the photo)
-          photoMap[key] = { photo: data.photo||'', photoLeft: data.photoLeft||'', photoRight: data.photoRight||'', _exists: true };
-        });
-        return cases.map(c => ({
-          ...c,
-          objects: (c.objects || []).map((obj, i) => {
-            const pm = photoMap[`${c.id}_${i}`] || {};
-            // FIXED: If Firestore has a doc for this object, trust its values exactly (even empty = deleted).
-            // Only fall back to obj.photo if no Firestore doc exists at all (_exists is falsy).
-            return {
-              ...obj,
-              photo:      pm._exists ? pm.photo      : (obj.photo      || ''),
-              photoLeft:  pm._exists ? pm.photoLeft  : (obj.photoLeft  || ''),
-              photoRight: pm._exists ? pm.photoRight : (obj.photoRight || ''),
-            };
-          })
-        }));
-      } catch(e) {
-        console.warn('[Firebase] Photo load failed:', e.message);
-        return cases;
-      }
-    }
-
-    // Merge photos back from local cache after loading from Firestore
-    async function mergePhotosFromLocal(cloudCases) {
-      try {
-        const localCases = await _idbLoadCases();
-        const localMap = {};
-        localCases.forEach(c => { localMap[c.id] = c; });
-        return cloudCases.map(c => {
-          const local = localMap[c.id];
-          if (!local || !local.objects) return c;
-          return {
-            ...c,
-            objects: (c.objects || []).map((obj, i) => {
-              const loc = local.objects[i] || {};
-              return {
-                ...obj,
-                // FIXED: Trust cloud (obj) value if it already has data (from Firestore).
-                // Only use local cache if cloud has no photo (avoids restoring deleted photos).
-                photo:      obj.photo      ? obj.photo      : (loc.photo      || ''),
-                photoLeft:  obj.photoLeft  ? obj.photoLeft  : (loc.photoLeft  || ''),
-                photoRight: obj.photoRight ? obj.photoRight : (loc.photoRight || ''),
-              };
-            })
-          };
-        });
-      } catch (e) {
-        return cloudCases;
       }
     }
 
@@ -994,15 +1012,17 @@
       const cloudCases = stripPhotosForCloud(cases);
       const batch = firestoreDB.batch();
       cloudCases.forEach(c => {
-        const ref = firestoreDB.collection('cases').doc(c.id);
-        batch.set(ref, { ...c, _updatedAt: new Date().toISOString() });
+        batch.set(firestoreDB.collection('cases').doc(c.id),
+          { ...c, _updatedAt: new Date().toISOString() });
       });
       await batch.commit();
-      // Save photos separately (non-blocking)
+      // Photos saved non-blocking (with _savedAt timestamp)
       _firestoreSavePhotos(cases).catch(e => console.warn('[Firebase] Photos save failed:', e.message));
-      console.log('[Firebase] ✅ Saved', cloudCases.length, 'cases to Firestore');
+      console.log('[Firebase] \u2705 Saved', cloudCases.length, 'cases');
       if (syncStatusCallback) syncStatusCallback('synced');
     }
+
+
 
     async function _firestoreDeleteCase(caseId) {
       if (!firestoreDB) return;
@@ -1059,25 +1079,34 @@
     }
 
     async function loadCasesFromDB() {
-      // Try Firestore first (freshest data)
-      if (firestoreDB) {
-        try {
-          const cloudCases = await _firestoreLoadCases();
-          if (cloudCases && cloudCases.length > 0) {
-            // Merge photos: try Firestore photos collection first, then local IndexedDB
-            let merged = await _firestoreLoadPhotos(cloudCases);
-            merged = await mergePhotosFromLocal(merged);
-            // Update local cache with cloud data
-            await _idbSaveCases(merged).catch(() => {});
-            return merged;
-          }
-        } catch (e) {
-          console.warn('[Firebase] Firestore load failed, using IndexedDB fallback:', e.message);
-          if (syncStatusCallback) syncStatusCallback('offline');
+      // Used by legacy callers (import, undo). Uses new _injectPhotos logic.
+      const localCases = await _idbLoadCases().catch(() => []);
+      if (!firestoreDB) return localCases;
+      try {
+        const localPhotoMap = _buildLocalPhotoMap(localCases);
+        const [cloudCases, cloudPhotoSnap] = await Promise.all([
+          _firestoreLoadCases().catch(() => null),
+          firestoreDB.collection('photos').get().catch(() => null),
+        ]);
+        if (!cloudCases || cloudCases.length === 0) return localCases;
+        const cloudPhotoMap = {};
+        if (cloudPhotoSnap) {
+          cloudPhotoSnap.docs.forEach(d => {
+            const data = d.data();
+            cloudPhotoMap[data.caseId + '_' + data.objIndex] = {
+              photo: data.photo||'', photoLeft: data.photoLeft||'',
+              photoRight: data.photoRight||'', _savedAt: data._savedAt||'',
+            };
+          });
         }
+        const merged = _injectPhotos(cloudCases, cloudPhotoMap, localPhotoMap);
+        await _idbSaveCases(merged).catch(() => {});
+        return merged;
+      } catch (e) {
+        console.warn('[Firebase] loadCasesFromDB failed, using local:', e.message);
+        if (syncStatusCallback) syncStatusCallback('offline');
+        return localCases;
       }
-      // Fallback to IndexedDB
-      return await _idbLoadCases();
     }
 
     async function deleteCaseFromDB(caseId) {
@@ -1127,6 +1156,88 @@
       const data = encoder.encode(password);
       const hash = await crypto.subtle.digest('SHA-256', data);
       return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    // ══════════════ AUDIT & DEVICE TRACING ══════════════
+    async function _idbSaveAuditLog(entry) {
+      try {
+        const d = await openDB();
+        const tx = d.transaction(AUDIT_STORE, 'readwrite');
+        tx.objectStore(AUDIT_STORE).add(entry);
+        return new Promise((r, j) => { tx.oncomplete = r; tx.onerror = e => j(e.target.error); });
+      } catch(e) { console.warn('[Audit] save failed', e); }
+    }
+
+    async function _idbLoadAuditLogs(limit = 300) {
+      try {
+        const d = await openDB();
+        const tx = d.transaction(AUDIT_STORE, 'readonly');
+        const req = tx.objectStore(AUDIT_STORE).getAll();
+        return new Promise((r, j) => {
+          req.onsuccess = () => {
+            const all = (req.result || []).sort((a, b) => (b.timestamp||'').localeCompare(a.timestamp||''));
+            r(all.slice(0, limit));
+          };
+          req.onerror = j;
+        });
+      } catch(e) { return []; }
+    }
+
+    async function _idbClearAuditLogs() {
+      try {
+        const d = await openDB();
+        const tx = d.transaction(AUDIT_STORE, 'readwrite');
+        tx.objectStore(AUDIT_STORE).clear();
+        return new Promise((r, j) => { tx.oncomplete = r; tx.onerror = j; });
+      } catch(e) {}
+    }
+
+    // Lấy IP cục bộ qua WebRTC (không cần server)
+    function getLocalIPAsync() {
+      return new Promise(resolve => {
+        const to = setTimeout(() => resolve('N/A'), 2500);
+        try {
+          const pc = new RTCPeerConnection({ iceServers: [] });
+          pc.createDataChannel('');
+          pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {});
+          pc.onicecandidate = e => {
+            if (!e || !e.candidate) return;
+            const m = /([0-9]{1,3}\.){3}[0-9]{1,3}/.exec(e.candidate.candidate);
+            if (m) { clearTimeout(to); try { pc.close(); } catch(_) {} resolve(m[0]); }
+          };
+          setTimeout(() => { try { pc.close(); } catch(_) {} resolve('N/A'); }, 2200);
+        } catch(_) { clearTimeout(to); resolve('WebRTC N/A'); }
+      });
+    }
+
+    function getDeviceInfo() {
+      return {
+        ua: (navigator.userAgent || '').substring(0, 100),
+        platform: navigator.platform || '',
+        lang: navigator.language || '',
+        screen: `${screen.width}x${screen.height}`,
+        tz: (Intl.DateTimeFormat().resolvedOptions() || {}).timeZone || '',
+        online: navigator.onLine,
+      };
+    }
+
+    async function writeAuditLog(action, extras = {}) {
+      const now = new Date();
+      let ip = 'N/A';
+      try { ip = await getLocalIPAsync(); } catch(_) {}
+      const entry = {
+        timestamp: now.toISOString(),
+        display: now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }),
+        user: sessionStorage.getItem('username') || 'anonymous',
+        action,
+        ip,
+        device: getDeviceInfo(),
+        ...extras,
+      };
+      await _idbSaveAuditLog(entry);
+      if (firestoreDB) {
+        firestoreDB.collection('auditLogs').add(entry).catch(() => {});
+      }
     }
 
     async function migrateFromLocalStorage() {
@@ -1844,13 +1955,16 @@ const parseVietnameseBioText = (text) => {
   let parentMode = null; // 'cha' | 'me'
 
   // ── Field keywords (lower-case, accent-aware) ─────────────────────────────
+  // MAIN_KEYS: các keyword chính của bản thân đối tượng → reset parentMode cha/mẹ
+  // LƯU Ý: KHÔNG đưa 'nghề nghiệp','nơi ở hiện tại' vào đây vì chúng cũng xuất hiện
+  // trong block cha/mẹ → sẽ reset parentMode sai, bỏ mất dữ liệu cha/mẹ
   const MAIN_KEYS = [
     'họ tên','họ và tên','giới tính','tên gọi khác','sinh ngày','tại',
     'quê quán','quốc tịch','dân tộc','tôn giáo',
     'số cmnd','số cccd','thẻ cccd','thẻ cc','hộ chiếu','cmnd','cccd',
     'cấp ngày','nơi cấp',
-    'trình độ','nghề nghiệp','nơi làm việc',
-    'nơi thường trú','nơi tạm trú','nơi ở hiện tại',
+    'trình độ','nơi làm việc',
+    'nơi thường trú','nơi tạm trú',
     'số điện thoại','điện thoại liên hệ','điện thoại để liên hệ',
   ];
 
@@ -1862,83 +1976,118 @@ const parseVietnameseBioText = (text) => {
     const line = raw;
     const ll = line.toLowerCase();
 
-    // ── Inline cha/mẹ parsing (when on same line, e.g. hoàn cảnh block) ──
-    if (/h[oọ]\s+t[eê]n\s+(cha|c|[cC]ha)/i.test(ll) || /h[oọ]\s+t[eê]n\s+c[aấ]/i.test(ll)) {
-      const m = line.match(/[Hh][oọ]\s+t[eê]n\s+cha\s*[:\-]\s*([^S][^i][^n][^h][^\s].*?)(?=\s+[Ss]inh\s|\s+[Nn]gh[eề]|\s+[Nn][oơ]i\s+[oởớ]|$)/i);
-      if (m && !data.chaTen) data.chaTen = m[1].trim();
-    }
-    if (/h[oọ]\s+t[eê]n\s+m[eẹ]/i.test(ll)) {
-      const m = line.match(/[Hh][oọ]\s+t[eê]n\s+m[eẹ]\s*[:\-]\s*([^S][^i][^n][^h][^\s].*?)(?=\s+[Ss]inh\s|\s+[Nn]gh[eề]|\s+[Nn][oơ]i\s+[oởớ]|$)/i);
-      if (m && !data.meTen) data.meTen = m[1].trim();
-    }
-    if (/sinh\s+n[aă]m\s*\(cha\)/i.test(ll) && !data.chaSinhNam) {
-      const m = line.match(/[Ss]inh\s+n[aă]m\s*\(cha\)\s*[:\-]\s*([^,;]+?)(?:\s+[Nn]gh[eề]|\s+[Nn][oơ]i|\s+[Hh][oọ]\s|$)/i);
-      if (m) data.chaSinhNam = m[1].trim();
-    }
-    if (/ngh[eề]\s+nghi[eệ]p\s*\(cha\)/i.test(ll) && !data.chaNgheNghiep) {
-      const m = line.match(/[Nn]gh[eề]\s+nghi[eệ]p\s*\(cha\)\s*[:\-]\s*([^,;]+?)(?:\s+[Nn][oơ]i|\s+[Hh][oọ]\s|$)/i);
-      if (m) data.chaNgheNghiep = m[1].trim();
-    }
-    if (/n[oơ]i\s+[oởớ]\s+hi[eệ]n\s+t[aạ]i\s*\(cha\)/i.test(ll) && !data.chaNoiO) {
-      const m = line.match(/[Nn][oơ]i\s+[oởớ]\s+hi[eệ]n\s+t[aạ]i\s*\(cha\)\s*[:\-]\s*([^,;]+?)(?:\s+[Hh][oọ]\s+t[eê]n\s+m[eẹ]|\s+M[eẹ]:|$)/i);
+    // ── INLINE: Nơi ở hiện tại (cha)/(mẹ) ─────────────────────────────────────
+    // Phải kiểm tra TRƯỚC các inline khác vì MAIN_KEYS có 'nơi ở hiện tại'
+    // FIX: dùng (.+) thay vì ([^,;]+?) để lấy toàn bộ địa chỉ kể cả dấu phẩy
+    if (/n[oơ]i\s+[oởớ][^(]*\(cha\)/i.test(ll) && !data.chaNoiO) {
+      const m = line.match(/n[oơ]i\s+[oởớ][^(]*\(cha\)\s*[:\-]\s*(.+)/i);
       if (m) data.chaNoiO = m[1].trim();
+      parentMode = 'cha'; continue;
     }
-    if (/sinh\s+n[aă]m\s*\(m[eẹ]\)/i.test(ll) && !data.meSinhNam) {
-      const m = line.match(/[Ss]inh\s+n[aă]m\s*\(m[eẹ]\)\s*[:\-]\s*([^,;]+?)(?:\s+[Nn]gh[eề]|\s+[Nn][oơ]i|\s+[Hh][oọ]\s|$)/i);
-      if (m) data.meSinhNam = m[1].trim();
-    }
-    if (/ngh[eề]\s+nghi[eệ]p\s*\(m[eẹ]\)/i.test(ll) && !data.meNgheNghiep) {
-      const m = line.match(/[Nn]gh[eề]\s+nghi[eệ]p\s*\(m[eẹ]\)\s*[:\-]\s*([^,;]+?)(?:\s+[Nn][oơ]i|\s+[Hh][oọ]\s|$)/i);
-      if (m) data.meNgheNghiep = m[1].trim();
-    }
-    if (/n[oơ]i\s+[oởớ]\s+hi[eệ]n\s+t[aạ]i\s*\(m[eẹ]\)/i.test(ll) && !data.meNoiO) {
-      const m = line.match(/[Nn][oơ]i\s+[oởớ]\s+hi[eệ]n\s+t[aạ]i\s*\(m[eẹ]\)\s*[:\-]\s*([^,;]+?)(?:\s+M[eẹ]:|\s+Em:|$)/i);
+    if (/n[oơ]i\s+[oởớ][^(]*\(m[eẹ]\)/i.test(ll) && !data.meNoiO) {
+      const m = line.match(/n[oơ]i\s+[oởớ][^(]*\(m[eẹ]\)\s*[:\-]\s*(.+)/i);
       if (m) data.meNoiO = m[1].trim();
+      parentMode = 'me'; continue;
     }
 
-    // ── Cha ──
-    if (/^cha\s*[:]\s*/i.test(ll)) {
+    // ── INLINE: Họ tên cha / mẹ ──────────────────────────────────────────────
+    if (/h[oọ]\s+(v[aà]\s+)?t[eê]n\s+cha/i.test(ll)) {
+      const m = line.match(/h[oọ]\s+(?:v[aà]\s+)?t[eê]n\s+cha\s*[:\-]\s*(.+)/i);
+      if (m && !data.chaTen) {
+        // Cắt nếu có "Sinh" hoặc "Nghề" ngay sau tên (trường hợp ghi một dòng)
+        data.chaTen = m[1].trim().split(/\s+(?:sinh\s|ngh[eề]\s)/i)[0].trim();
+      }
+      parentMode = 'cha'; continue;
+    }
+    if (/h[oọ]\s+(v[aà]\s+)?t[eê]n\s+m[eẹ]/i.test(ll)) {
+      const m = line.match(/h[oọ]\s+(?:v[aà]\s+)?t[eê]n\s+m[eẹ]\s*[:\-]\s*(.+)/i);
+      if (m && !data.meTen) {
+        data.meTen = m[1].trim().split(/\s+(?:sinh\s|ngh[eề]\s)/i)[0].trim();
+      }
+      parentMode = 'me'; continue;
+    }
+
+    // ── INLINE: Sinh năm / Nghề nghiệp (cha)/(mẹ) ────────────────────────────
+    if (/sinh\s+n[aă]m\s*\(cha\)/i.test(ll) && !data.chaSinhNam) {
+      const m = line.match(/sinh\s+n[aă]m\s*\(cha\)\s*[:\-]\s*(.+)/i);
+      if (m) { const yr = m[1].match(/(19|20)\d{2}/); data.chaSinhNam = yr ? yr[0] : m[1].trim(); }
+      parentMode = 'cha'; continue;
+    }
+    if (/ngh[eề]\s+nghi[eệ]p\s*\(cha\)/i.test(ll) && !data.chaNgheNghiep) {
+      const m = line.match(/ngh[eề]\s+nghi[eệ]p\s*\(cha\)\s*[:\-]\s*(.+)/i);
+      if (m) data.chaNgheNghiep = m[1].trim();
+      parentMode = 'cha'; continue;
+    }
+    if (/sinh\s+n[aă]m\s*\(m[eẹ]\)/i.test(ll) && !data.meSinhNam) {
+      const m = line.match(/sinh\s+n[aă]m\s*\(m[eẹ]\)\s*[:\-]\s*(.+)/i);
+      if (m) { const yr = m[1].match(/(19|20)\d{2}/); data.meSinhNam = yr ? yr[0] : m[1].trim(); }
+      parentMode = 'me'; continue;
+    }
+    if (/ngh[eề]\s+nghi[eệ]p\s*\(m[eẹ]\)/i.test(ll) && !data.meNgheNghiep) {
+      const m = line.match(/ngh[eề]\s+nghi[eệ]p\s*\(m[eẹ]\)\s*[:\-]\s*(.+)/i);
+      if (m) data.meNgheNghiep = m[1].trim();
+      parentMode = 'me'; continue;
+    }
+
+    // ── BLOCK: "Cha: tên" hoặc "Cha" đứng một mình = họ tên cha ─────────────
+    // NEW: "Cha" (không có các từ khoá khác) được hiểu là "Họ tên cha"
+    if (/^cha\s*[:\-]?\s*/i.test(ll) && !/ngh[eề]|sinh\s+n[aă]m|n[oơ]i\s+[oở]/i.test(ll)) {
       parentMode = 'cha';
       const v = afterKey(line, 'Cha');
       if (v && v.length > 1 && !data.chaTen) data.chaTen = v;
       continue;
     }
-    // ── Mẹ ──
-    if (/^m[eẹ]\s*[:]\s*/i.test(ll)) {
+    // NEW: "Mẹ" (không có các từ khoá khác) được hiểu là "Họ tên mẹ"
+    if (/^m[eẹ]\s*[:\-]?\s*/i.test(ll) && !/ngh[eề]|sinh\s+n[aă]m|n[oơ]i\s+[oở]/i.test(ll)) {
       parentMode = 'me';
       const v = afterKey(line, 'Mẹ', 'Me');
       if (v && v.length > 1 && !data.meTen) data.meTen = v;
       continue;
     }
 
-    // ── Inside Cha/Mẹ block ──
+    // ── INSIDE Cha/Mẹ block ───────────────────────────────────────────────────
+    // FIX: kiểm tra từng field CỤ THỂ TRƯỚC resetParent để không bị reset sai
     if (parentMode === 'cha') {
-      if (resetParent(ll)) { parentMode = null; }
-      else {
-        if (/sinh\s+n[aă]m/i.test(ll)) { 
-          const yr = ll.match(/(19|20)\d{2}/); 
-          if (yr && !data.chaSinhNam) { data.chaSinhNam = yr[0]; }
-          else if (!data.chaSinhNam) { const vv = afterKey(line,'Sinh năm'); if (vv) data.chaSinhNam = vv.replace(/[;,].*$/,'').trim(); }
-          continue; 
-        }
-        if (/ngh[eề]\s+nghi[eệ]p/i.test(ll)) { const v = afterKey(line,'Nghề nghiệp'); if (v && !data.chaNgheNghiep) data.chaNgheNghiep = v; continue; }
-        if (/n[oơ]i\s+[oở]/i.test(ll)) { const v = afterKey(line,'Nơi ở hiện tại','Nơi ở','Nơi thường trú'); if (v && !data.chaNoiO) data.chaNoiO = v; continue; }
+      // Trường hợp đặc biệt: gặp "Họ tên mẹ" → chuyển sang mẹ
+      if (/h[oọ]\s+(v[aà]\s+)?t[eê]n\s+m[eẹ]/i.test(ll)) { parentMode = 'me'; }
+      // Nơi ở (có thể có dấu phẩy trong địa chỉ) — kiểm tra TRƯỚC resetParent
+      else if (/n[oơ]i\s+[oở]/i.test(ll)) {
+        const v = afterKey(line,'Nơi ở hiện tại','Nơi ở','Nơi thường trú');
+        if (v && !data.chaNoiO) data.chaNoiO = v; continue;
+      }
+      else if (/ngh[eề]\s+nghi[eệ]p/i.test(ll)) {
+        const v = afterKey(line,'Nghề nghiệp');
+        if (v && !data.chaNgheNghiep) data.chaNgheNghiep = v; continue;
+      }
+      else if (/sinh\s+n[aă]m/i.test(ll)) {
+        const yr = ll.match(/(19|20)\d{2}/);
+        if (yr && !data.chaSinhNam) data.chaSinhNam = yr[0];
+        else if (!data.chaSinhNam) { const vv = afterKey(line,'Sinh năm'); if (vv) data.chaSinhNam = vv.replace(/[;,].*$/,'').trim(); }
         continue;
       }
+      else if (resetParent(ll)) { parentMode = null; }
+      else { continue; }
     }
     if (parentMode === 'me') {
-      if (resetParent(ll)) { parentMode = null; }
-      else {
-        if (/sinh\s+n[aă]m/i.test(ll)) { 
-          const yr = ll.match(/(19|20)\d{2}/); 
-          if (yr && !data.meSinhNam) { data.meSinhNam = yr[0]; }
-          else if (!data.meSinhNam) { const vv = afterKey(line,'Sinh năm'); if (vv) data.meSinhNam = vv.replace(/[;,].*$/,'').trim(); }
-          continue; 
-        }
-        if (/ngh[eề]\s+nghi[eệ]p/i.test(ll)) { const v = afterKey(line,'Nghề nghiệp'); if (v && !data.meNgheNghiep) data.meNgheNghiep = v; continue; }
-        if (/n[oơ]i\s+[oở]/i.test(ll)) { const v = afterKey(line,'Nơi ở hiện tại','Nơi ở','Nơi thường trú'); if (v && !data.meNoiO) data.meNoiO = v; continue; }
+      // Trường hợp đặc biệt: gặp "Họ tên cha" → chuyển sang cha
+      if (/h[oọ]\s+(v[aà]\s+)?t[eê]n\s+cha/i.test(ll)) { parentMode = 'cha'; }
+      // Nơi ở — kiểm tra TRƯỚC resetParent
+      else if (/n[oơ]i\s+[oở]/i.test(ll)) {
+        const v = afterKey(line,'Nơi ở hiện tại','Nơi ở','Nơi thường trú');
+        if (v && !data.meNoiO) data.meNoiO = v; continue;
+      }
+      else if (/ngh[eề]\s+nghi[eệ]p/i.test(ll)) {
+        const v = afterKey(line,'Nghề nghiệp');
+        if (v && !data.meNgheNghiep) data.meNgheNghiep = v; continue;
+      }
+      else if (/sinh\s+n[aă]m/i.test(ll)) {
+        const yr = ll.match(/(19|20)\d{2}/);
+        if (yr && !data.meSinhNam) data.meSinhNam = yr[0];
+        else if (!data.meSinhNam) { const vv = afterKey(line,'Sinh năm'); if (vv) data.meSinhNam = vv.replace(/[;,].*$/,'').trim(); }
         continue;
       }
+      else if (resetParent(ll)) { parentMode = null; }
+      else { continue; }
     }
 
     // ── Họ tên ──
@@ -2138,6 +2287,120 @@ const fmtDateShort = (isoDate) => {
 
 
 // ==================== WORD TEMPLATE EXPORT (JSZip) ====================
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+// Pre-process Word XML to fix placeholders split across multiple <w:r> runs.
+//
+// Word splits placeholder text like {doituong1_ho_va_ten_hoa} across several runs due to:
+//   - Spell-check proofErr markers, bookmarks, lastRenderedPageBreak (removed in Pass 1)
+//   - Italic/bold run boundaries (the italic text ending in run_A, placeholder in run_B+C)
+//   - The NEXT placeholder starting inside the same run as the closing '}' of the current one
+//
+// Core algorithm (paragraph-aware, not regex-pair approach):
+//   For each <w:p>, extract all <w:r> runs into an array with their text + rPr formatting.
+//   Walk the array: whenever run[i].text has '{' but no '}', absorb run[i+1] into run[i].
+//   Repeat until stable. Rebuild the paragraph from the (possibly merged) run array.
+//
+// This is O(n) per paragraph and correctly handles ALL split patterns regardless of
+// what content follows the incomplete placeholder.
+function _fixDocxRunSplit(xml) {
+  // ── Pass 1: remove pure-noise self-closing elements ─────────────────────────
+  xml = xml.replace(/<w:proofErr\b[^>]*\/?>/g, '');
+  xml = xml.replace(/<w:bookmarkStart\b[^>]*\/?>/g, '');
+  xml = xml.replace(/<w:bookmarkEnd\b[^>]*\/?>/g, '');
+  xml = xml.replace(/<w:lastRenderedPageBreak\b[^>]*\/?>/g, '');
+  xml = xml.replace(/<w:rPrChange\b[\s\S]*?<\/w:rPrChange>/g, '');
+
+  // ── Pass 2: paragraph-level run merging ─────────────────────────────────────
+  xml = xml.replace(/(<w:p\b[^>]*>)([\s\S]*?)(<\/w:p>)/g, function(_, pOpen, pContent, pClose) {
+
+    // Split paragraph content into alternating non-run and run segments
+    var parts = [];
+    var last  = 0;
+    var RUN_RE = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/g;
+    var rm;
+    while ((rm = RUN_RE.exec(pContent)) !== null) {
+      if (rm.index > last) parts.push({ k: 'x', c: pContent.slice(last, rm.index) });
+      var raw   = rm[0];
+      var tM    = raw.match(/<w:t[^>]*>([\s\S]*?)<\/w:t>/);
+      var rprM  = raw.match(/<w:rPr>[\s\S]*?<\/w:rPr>/);
+      parts.push({ k: 'r', txt: tM ? tM[1] : '', rpr: rprM ? rprM[0] : '' });
+      last = rm.index + raw.length;
+    }
+    if (last < pContent.length) parts.push({ k: 'x', c: pContent.slice(last) });
+
+    // Merge: if run[i] has unclosed '{', absorb the text of run[i+1] into run[i].
+    // Repeat until no changes remain (handles N-way splits).
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (var i = 0; i < parts.length - 1; i++) {
+        var a = parts[i], b = parts[i + 1];
+        if (a.k === 'r' && b.k === 'r' && a.txt.indexOf('{') !== -1 && a.txt.indexOf('}') === -1) {
+          parts[i] = { k: 'r', txt: a.txt + b.txt, rpr: a.rpr };
+          parts.splice(i + 1, 1);
+          changed = true;
+          // restart scan from position i (not 0) so we keep merging the same run
+          i = Math.max(i - 1, -1);
+        }
+      }
+    }
+
+    // Rebuild paragraph content from merged parts
+    var out = parts.map(function(p) {
+      if (p.k === 'x') return p.c;
+      return '<w:r>' + p.rpr + '<w:t xml:space="preserve">' + p.txt + '</w:t></w:r>';
+    }).join('');
+
+    return pOpen + out + pClose;
+  });
+
+  return xml;
+}
+
+// Build a complete, standards-compliant inline drawing paragraph for Word.
+// cx/cy in EMUs (1 cm = 360000 EMU). docPrId must be unique across the document.
+// align: 'left' | 'center' | 'right' (default 'left' to preserve cell alignment)
+function _buildDrawingPara(rId, docPrId, cx, cy, align) {
+  // Declare ALL needed namespaces on a single wrapper so Word never sees undeclared prefixes.
+  // Using a real <w:p> with proper namespace refs that are already declared in <w:document>.
+  // We keep inline xmlns only on the drawing root to stay self-contained.
+  const jc = align || 'left';
+  const pPr = jc !== 'left'
+    ? `<w:pPr><w:jc w:val="${jc}"/></w:pPr>`
+    : '<w:pPr/>';
+  return (
+    `<w:p>${pPr}<w:r><w:drawing>` +
+    `<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"` +
+    ` distT="0" distB="0" distL="0" distR="0">` +
+    `<wp:extent cx="${cx}" cy="${cy}"/>` +
+    `<wp:effectExtent l="0" t="0" r="0" b="0"/>` +
+    `<wp:docPr id="${docPrId}" name="Picture ${docPrId}"/>` +
+    `<wp:cNvGraphicFramePr>` +
+    `<a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>` +
+    `</wp:cNvGraphicFramePr>` +
+    `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">` +
+    `<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">` +
+    `<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"` +
+    ` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+    `<pic:nvPicPr>` +
+    `<pic:cNvPr id="${docPrId}" name="Picture ${docPrId}"/>` +
+    `<pic:cNvPicPr><a:picLocks noChangeAspect="1"/></pic:cNvPicPr>` +
+    `</pic:nvPicPr>` +
+    `<pic:blipFill>` +
+    `<a:blip r:embed="${rId}"/>` +
+    `<a:stretch><a:fillRect/></a:stretch>` +
+    `</pic:blipFill>` +
+    `<pic:spPr>` +
+    `<a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+    `</pic:spPr>` +
+    `</pic:pic>` +
+    `</a:graphicData></a:graphic>` +
+    `</wp:inline></w:drawing></w:r></w:p>`
+  );
+}
+
 const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjIndices, unitSettings) => {
   if (!templateFile) return 'Chưa chọn file mẫu';
   try {
@@ -2146,6 +2409,9 @@ const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjInd
     const docXmlFile = zip.file('word/document.xml');
     if (!docXmlFile) return 'File Word không hợp lệ';
     let docXml = await docXmlFile.async('text');
+
+    // ── STEP 0: Fix run-split placeholders BEFORE any replacement ─────────
+    docXml = _fixDocxRunSplit(docXml);
     
     const us = unitSettings || getUnitSettings();
     const replacements = {
@@ -2379,87 +2645,123 @@ const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjInd
     });
 
     // Replace all placeholders in XML
-    // Need to handle XML-encoded chars and run-split placeholders
+    // Sort LONGEST key first so e.g. {doituong1_ho_va_ten_hoa} is replaced
+    // before {doituong1_ho_va_ten} – prevents any accidental partial match.
     let xmlText = docXml;
-    // First decode XML entities for matching
-    const escXml = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    const repEntries = Object.entries(replacements);
+    const escXml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const repEntries = Object.entries(replacements).sort((a, b) => b[0].length - a[0].length);
     for (let _ri = 0; _ri < repEntries.length; _ri++) {
       xmlText = xmlText.split(repEntries[_ri][0]).join(escXml(repEntries[_ri][1]));
     }
 
-    // ── Image placeholder injection ───────────────────────────────────────
-    // Collect all image placeholders: {doituongN_anh_chinh/anh_trai/anh_phai/anh}
-    const imgRelIds = {};
-    let imgRelCounter = 100; // start at rId100 to avoid conflicts
-    const rels = { 'anh_chinh': 'photo', 'anh_trai': 'photoLeft', 'anh_phai': 'photoRight', 'anh': 'photo' };
+    // ── STEP 2: Parse existing rIds and docPrIds to avoid conflicts ──────
+    // This prevents Word from rejecting the file due to duplicate relationship/drawing IDs.
+    let maxExistingRId = 200;
+    let maxExistingDocPrId = 200;
+    try {
+      const relsText = await zip.file('word/_rels/document.xml.rels').async('text');
+      (relsText.match(/Id="rId(\d+)"/g) || []).forEach(m => {
+        const n = parseInt(m.replace(/\D/g, ''));
+        if (n > maxExistingRId) maxExistingRId = n;
+      });
+    } catch(e) { /* no rels file */ }
+    (xmlText.match(/<wp:docPr\s[^>]*id="(\d+)"/g) || []).forEach(m => {
+      const n = parseInt((m.match(/id="(\d+)"/) || [])[1] || '0');
+      if (n > maxExistingDocPrId) maxExistingDocPrId = n;
+    });
 
-    // Build relationship XML additions
+    // ── STEP 3: Image paragraph injection ────────────────────────────────
+    const imgRels   = { 'anh_chinh': 'photo', 'anh_trai': 'photoLeft', 'anh_phai': 'photoRight', 'anh': 'photo' };
+    let imgRelCounter = maxExistingRId;       // starts ABOVE existing rIds
+    let docPrIdCounter = maxExistingDocPrId;  // starts ABOVE existing docPrIds
     let addedRels = '';
-    const usedImgs = []; // [{placeholder, rId, base64, mime}]
+    const phToDrawing = {};   // placeholder → drawing paragraph XML
+    const neededExts  = {};   // ext → content-type (collected for batch update)
 
-    selectedObjIndices.forEach((objIdx, i) => {
+    selectedObjIndices.forEach((objIdx, arrIdx) => {
       const dt = objList[objIdx];
       if (!dt) return;
-      const pNum = i + 1;
-      Object.entries(rels).forEach(([suffix, field]) => {
+      const pNum = arrIdx + 1;
+      Object.entries(imgRels).forEach(([suffix, field]) => {
         const ph = `{doituong${pNum}_${suffix}}`;
-        if (xmlText.includes(ph) && dt[field] && dt[field].startsWith('data:')) {
-          const parts = dt[field].match(/^data:(image\/[a-z]+);base64,(.+)$/);
-          if (!parts) return;
-          const mime = parts[1]; // e.g. image/jpeg
-          const b64 = parts[2];
-          const ext = mime.split('/')[1].replace('jpeg','jpg');
-          const rId = 'rId' + (++imgRelCounter);
-          const mediaName = `media/doituong${pNum}_${suffix}.${ext}`;
-          imgRelIds[ph] = { rId, b64, mime, mediaName };
-          addedRels += `<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${mediaName}"/>`;
-          zip.file('word/' + mediaName, b64, { base64: true });
-        }
+        if (!xmlText.includes(ph)) return;
+        if (!dt[field] || !dt[field].startsWith('data:')) return;
+        const parts = dt[field].match(/^data:(image\/[a-z+]+);base64,(.+)$/s);
+        if (!parts) return;
+        const mime = parts[1];
+        const b64  = parts[2];
+        const ext  = mime.split('/')[1].replace('jpeg', 'jpg');
+        const rId  = 'rId' + (++imgRelCounter);
+        const docPrId = ++docPrIdCounter;
+        const mediaName = `media/doituong${pNum}_${suffix}.${ext}`;
+
+        zip.file('word/' + mediaName, b64, { base64: true });
+        addedRels += `<Relationship Id="${rId}"` +
+          ` Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"` +
+          ` Target="${mediaName}"/>`;
+
+        const cx = 1080000; // 3 cm in EMUs
+        const cy = 1440000; // 4 cm in EMUs
+        phToDrawing[ph] = _buildDrawingPara(rId, docPrId, cx, cy, 'center');
+
+        const ctMap = { jpg:'image/jpeg', png:'image/png', gif:'image/gif',
+                        bmp:'image/bmp', tif:'image/tiff', tiff:'image/tiff', webp:'image/webp' };
+        neededExts[ext] = ctMap[ext] || 'image/jpeg';
       });
     });
 
-    // Replace image placeholder text with inline drawing XML
-    Object.entries(imgRelIds).forEach(([ph, { rId }]) => {
-      // Default size: 3cm x 4cm (portrait photo size) in EMUs (1cm = 360000 EMU)
-      const cx = 1080000; // 3cm
-      const cy = 1440000; // 4cm
-      const drawXml = `</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${rId}" name="Photo"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name=""/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${rId}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:p><w:r><w:t>`;
-      xmlText = xmlText.split(ph).join(drawXml);
-    });
+    // Replace each paragraph containing an image placeholder with a drawing paragraph.
+    if (Object.keys(phToDrawing).length > 0) {
+      xmlText = xmlText.replace(/<w:p[ >][\s\S]*?<\/w:p>/g, (para) => {
+        for (const [ph, drawPara] of Object.entries(phToDrawing)) {
+          if (para.includes(ph)) return drawPara;
+        }
+        return para;
+      });
 
-    // Add required XML namespace declarations if images were added
-    if (Object.keys(imgRelIds).length > 0) {
-      // Ensure wp and pic namespaces are present
-      if (!xmlText.includes('xmlns:wp=')) {
-        xmlText = xmlText.replace('<w:document ', '<w:document xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ');
-      }
-      // Patch .rels file
+      // Patch relationships (awaited)
       if (addedRels) {
         try {
           let relsXml = await zip.file('word/_rels/document.xml.rels').async('text');
           relsXml = relsXml.replace('</Relationships>', addedRels + '</Relationships>');
           zip.file('word/_rels/document.xml.rels', relsXml);
-        } catch(e) { console.warn('Could not patch .rels:', e.message); }
+        } catch(e) { console.warn('[Word Export] Could not patch .rels:', e.message); }
       }
+
+      // ── CRITICAL: Update [Content_Types].xml with AWAIT (not .then) ──────
+      // Bug fix: previous code used .then() without await → ZIP was generated
+      // before the content-type was written → file corrupt / cannot open.
+      try {
+        const ctFile = zip.file('[Content_Types].xml');
+        if (ctFile) {
+          let ctXml = await ctFile.async('text'); // MUST be awaited
+          for (const [ext, ct] of Object.entries(neededExts)) {
+            if (!ctXml.includes(`Extension="${ext}"`)) {
+              ctXml = ctXml.replace('</Types>',
+                `<Default Extension="${ext}" ContentType="${ct}"/></Types>`);
+            }
+          }
+          zip.file('[Content_Types].xml', ctXml);
+        }
+      } catch(e) { console.warn('[Word Export] Could not patch content types:', e.message); }
     }
 
-    // Clear any remaining unfilled placeholders (fields with no data)
+    // ── STEP 4: Clean up any remaining unfilled placeholders ─────────────
+    // Only match placeholders that are NOT inside XML tags (safe cleanup)
     xmlText = xmlText.replace(/\{[a-z][a-z0-9_]*\}/gi, '');
     zip.file('word/document.xml', xmlText);
 
-    // Also process headers and footers
-    const headerFooterFiles = Object.keys(zip.files).filter(f => 
+    // ── STEP 5: Process headers and footers ───────────────────────────────
+    const headerFooterFiles = Object.keys(zip.files).filter(f =>
       /word\/(header|footer)\d*\.xml/i.test(f)
     );
-    const replacementEntries = Object.entries(replacements);
     for (let _hi = 0; _hi < headerFooterFiles.length; _hi++) {
       const hfFile = headerFooterFiles[_hi];
       let hfXml = await zip.file(hfFile).async('text');
-      for (let _pi = 0; _pi < replacementEntries.length; _pi++) {
-        hfXml = hfXml.split(replacementEntries[_pi][0]).join(escXml(replacementEntries[_pi][1]));
+      hfXml = _fixDocxRunSplit(hfXml);
+      for (let _pi = 0; _pi < repEntries.length; _pi++) {
+        hfXml = hfXml.split(repEntries[_pi][0]).join(escXml(repEntries[_pi][1]));
       }
-      // Clear remaining placeholders in headers/footers too
       hfXml = hfXml.replace(/\{[a-z][a-z0-9_]*\}/gi, '');
       zip.file(hfFile, hfXml);
     }
@@ -4167,6 +4469,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
 
     // ObjectForm Component - FIXED VERSION
     const ObjectForm = ({ 
+      requestSecure,
       objectData, 
       setObjectData, 
       tempObjects, 
@@ -4488,8 +4791,55 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       }, [objectData, editingIndex]);
       
       // FIXED: Handle input changes with proper state management
+      // Hàm cập nhật trường có bảo mật: nếu trường đã có dữ liệu → yêu cầu mật khẩu
+      const secureSetObjectField = useCallback((name, value) => {
+        const label = SECURE_FIELDS[name];
+        const current = objectData[name];
+        if (label && current && String(current).trim()) {
+          requestSecure(label, () => setObjectData(prev => ({ ...prev, [name]: value })));
+        } else {
+          setObjectData(prev => ({ ...prev, [name]: value }));
+        }
+      }, [objectData, requestSecure]);
+
+      // Hàm xóa trường bảo mật có xác thực
+      const secureClearObjectField = useCallback((fields) => {
+        // fields: string hoặc array of string
+        const arr = Array.isArray(fields) ? fields : [fields];
+        const secureLabel = arr.map(f => SECURE_FIELDS[f]).filter(Boolean)[0];
+        const hasData = arr.some(f => objectData[f] && String(objectData[f]).trim());
+        const doIt = () => setObjectData(prev => {
+          const upd = { ...prev };
+          arr.forEach(f => { upd[f] = ''; });
+          return upd;
+        });
+        if (secureLabel && hasData) {
+          requestSecure(secureLabel + ' (xóa)', doIt);
+        } else {
+          doIt();
+        }
+      }, [objectData, requestSecure]);
+
       const handleObjectInputChange = useCallback((e) => {
         const { name, value } = e.target;
+        // Trường bảo mật: nếu đã có dữ liệu → yêu cầu xác thực mật khẩu
+        if (SECURE_FIELDS[name]) {
+          const current = objectData[name];
+          if (current && String(current).trim()) {
+            requestSecure(SECURE_FIELDS[name], () =>
+              setObjectData(prev => {
+                const nd = { ...prev };
+                if (['birthDate','issueDate','invitationDate','ngayChuyen','reportDate','decisionDate','prosecutionDateObj','custodyDecisionDate','detentionDecisionDate'].includes(name)) {
+                  nd[name] = DateUtils.parseFromVietnamese(value);
+                } else {
+                  nd[name] = value;
+                }
+                return nd;
+              })
+            );
+            return;
+          }
+        }
         
         setObjectData(prev => {
           const newData = { ...prev };
@@ -5235,7 +5585,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                       <label className="form-label">Số Biên bản XPHC</label>
                       <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
                       <input type="text" name="administrativeRecordNumber" value={objectData.administrativeRecordNumber || ''} onChange={handleObjectInputChange} placeholder="Nhập số biên bản XPHC" className="form-control" />
-                      {objectData.administrativeRecordNumber && <button type="button" className="btn btn-danger btn-xs" onClick={()=>setObjectData(prev=>({...prev,administrativeRecordNumber:''}))}>🗑️</button>}
+                      {objectData.administrativeRecordNumber && <button type="button" className="btn btn-danger btn-xs" onClick={()=>secureClearObjectField('administrativeRecordNumber')}>🗑️</button>}
                       </div>
                     </div>
                     {renderUndoButton('administrativeRecordNumber')}
@@ -5245,7 +5595,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                       <label className="form-label">Ngày lập biên bản</label>
                       <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
                       <input type="text" ref={reportDateRef} name="reportDate" placeholder="dd/mm/yyyy" className="form-control" />
-                      {objectData.reportDate && <button type="button" className="btn btn-danger btn-xs" onClick={()=>{ setObjectData(prev=>({...prev,reportDate:''})); if(reportDateRef.current) reportDateRef.current.value=''; }}>🗑️</button>}
+                      {objectData.reportDate && <button type="button" className="btn btn-danger btn-xs" onClick={()=>secureClearObjectField('reportDate')}>🗑️</button>}
                       </div>
                     </div>
                     {renderUndoButton('reportDate')}
@@ -5295,7 +5645,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                       <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
                       <input type="text" ref={prosecutionDateObjRef} name="prosecutionDateObj" placeholder="dd/mm/yyyy" className="form-control" />
                       {objectData.prosecutionDateObj && (
-                        <button type="button" className="btn btn-danger btn-xs" onClick={()=>{ setObjectData(prev=>({...prev,prosecutionDateObj:'',qdKtbcNgay:''})); if(prosecutionDateObjRef.current) prosecutionDateObjRef.current.value=''; }}>🗑️</button>
+                        <button type="button" className="btn btn-danger btn-xs" onClick={()=>secureClearObjectField(['prosecutionDateObj','qdKtbcNgay'])}>🗑️</button>
                       )}
                       </div>
                     </div>
@@ -5307,7 +5657,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                       <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
                       <input type="text" name="prosecutionDecisionObj" value={objectData.prosecutionDecisionObj || ''} onChange={handleObjectInputChange} placeholder="Số QĐ khởi tố" className="form-control" />
                       {objectData.prosecutionDecisionObj && (
-                        <button type="button" className="btn btn-danger btn-xs" onClick={()=>setObjectData(prev=>({...prev,prosecutionDecisionObj:'',qdKtbcSo:''}))}>🗑️</button>
+                        <button type="button" className="btn btn-danger btn-xs" onClick={()=>secureClearObjectField(['prosecutionDecisionObj','qdKtbcSo'])}>🗑️</button>
                       )}
                       </div>
                     </div>
@@ -5509,14 +5859,14 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                     <label className="form-label" style={{color:(objectData.qdKtbcSo||objectData.prosecutionDecisionObj)?'#1d4ed8':'#374151', fontWeight:600}}>Số QĐ KHỞI TỐ BỊ CAN</label>
                     <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
                     <input type="text" name="qdKtbcSo" value={objectData.qdKtbcSo || objectData.prosecutionDecisionObj || ''} onChange={handleObjectInputChange} className="form-control" style={{color:(objectData.qdKtbcSo||objectData.prosecutionDecisionObj)?'#1d4ed8':'inherit'}} placeholder="Số QĐ khởi tố bị can" />
-                    {(objectData.qdKtbcSo||objectData.prosecutionDecisionObj) && <button type="button" className="btn btn-danger btn-xs" onClick={()=>setObjectData(prev=>({...prev,qdKtbcSo:'',prosecutionDecisionObj:''}))}>🗑️</button>}
+                    {(objectData.qdKtbcSo||objectData.prosecutionDecisionObj) && <button type="button" className="btn btn-danger btn-xs" onClick={()=>secureClearObjectField(['qdKtbcSo','prosecutionDecisionObj'])}>🗑️</button>}
                     </div>
                   </div>
                   <div style={{background: (objectData.qdKtbcNgay||objectData.prosecutionDateObj) ? '#eff6ff' : '#f8fafc', borderRadius:'4px', padding:'6px', border: (objectData.qdKtbcNgay||objectData.prosecutionDateObj) ? '1px solid #93c5fd' : '1px solid #e2e8f0'}}>
                     <label className="form-label" style={{color:(objectData.qdKtbcNgay||objectData.prosecutionDateObj)?'#1d4ed8':'#374151', fontWeight:600}}>NGÀY QĐ KHỞI TỐ BỊ CAN</label>
                     <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
                     <FpDateInput name="qdKtbcNgay" value={objectData.qdKtbcNgay || objectData.prosecutionDateObj || ''} onChange={handleObjectInputChange} className="form-control" />
-                    {(objectData.qdKtbcNgay||objectData.prosecutionDateObj) && <button type="button" className="btn btn-danger btn-xs" onClick={()=>setObjectData(prev=>({...prev,qdKtbcNgay:'',prosecutionDateObj:''}))}>🗑️</button>}
+                    {(objectData.qdKtbcNgay||objectData.prosecutionDateObj) && <button type="button" className="btn btn-danger btn-xs" onClick={()=>secureClearObjectField(['qdKtbcNgay','prosecutionDateObj'])}>🗑️</button>}
                     </div>
                   </div>
                   <div><label className="form-label">Số lệnh bắt</label><input type="text" name="lenhBatSo" value={objectData.lenhBatSo||''} onChange={handleObjectInputChange} className="form-control" /></div>
@@ -5561,6 +5911,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
     
     // CaseForm Component (continuing...)
     const CaseForm = ({ 
+      requestSecure,
       caseData, 
       setCaseData, 
       tempObjects, 
@@ -5700,6 +6051,10 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       
       const handleInputChange = useCallback((e) => {
         const { name, value } = e.target;
+        if (SECURE_FIELDS[name] && caseData[name] && String(caseData[name]).trim()) {
+          requestSecure(SECURE_FIELDS[name], () => setCaseData(prev => ({ ...prev, [name]: value })));
+          return;
+        }
         
         setCaseData(prev => {
           let newCaseData = { ...prev };
@@ -6172,11 +6527,12 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   {isEditing && caseData.prosecutionDate && (
                     <button type="button" className="btn btn-danger btn-xs" title="Xóa ngày khởi tố vụ án"
                       onClick={()=>{
-                        setCaseData(prev=>({...prev,prosecutionDate:'',investigationConclusionDate:'',expirationDate:'',prosecutionDecision:''}));
-                        if(prosecutionDateRef.current) prosecutionDateRef.current.value='';
-                        if(investigationConclusionDateRef.current) investigationConclusionDateRef.current.value='';
-                        // Sync: clear qdKtvaSo/qdKtvaNgay in all objects
-                        setTempObjects(prev=>prev.map(o=>({...o,qdKtvaSo:'',qdKtvaNgay:''})));
+                        requestSecure('Ngày khởi tố vụ án (xóa)', () => {
+                          setCaseData(prev=>({...prev,prosecutionDate:'',investigationConclusionDate:'',expirationDate:'',prosecutionDecision:''}));
+                          if(prosecutionDateRef.current) prosecutionDateRef.current.value='';
+                          if(investigationConclusionDateRef.current) investigationConclusionDateRef.current.value='';
+                          setTempObjects(prev=>prev.map(o=>({...o,qdKtvaSo:'',qdKtvaNgay:''})));
+                        });
                       }}>
                       🗑️
                     </button>
@@ -6198,7 +6554,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   />
                   {isEditing && caseData.prosecutionDecision && (
                     <button type="button" className="btn btn-danger btn-xs" title="Xóa số QĐ"
-                      onClick={()=>{ setCaseData(prev=>({...prev,prosecutionDecision:''})); setTempObjects(prev=>prev.map(o=>({...o,qdKtvaSo:''}))); }}>🗑️</button>
+                      onClick={()=>{ requestSecure('Số QĐ khởi tố vụ án (xóa)', () => { setCaseData(prev=>({...prev,prosecutionDecision:''})); setTempObjects(prev=>prev.map(o=>({...o,qdKtvaSo:''}))); }); }}>🗑️</button>
                   )}
                   </div>
                 </div>
@@ -6220,7 +6576,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   />
                   {isEditing && caseData.penaltyDate && (
                     <button type="button" className="btn btn-danger btn-xs" title="Xóa ngày QĐ xử phạt"
-                      onClick={()=>{ setCaseData(prev=>({...prev,penaltyDate:'',penaltyDecision:''})); if(penaltyDateRef.current) penaltyDateRef.current.value=''; }}>🗑️</button>
+                      onClick={()=>{ requestSecure('Ngày QĐ xử phạt (xóa)', () => { setCaseData(prev=>({...prev,penaltyDate:'',penaltyDecision:''})); if(penaltyDateRef.current) penaltyDateRef.current.value=''; }); }}>🗑️</button>
                   )}
                   </div>
                 </div>
@@ -6238,7 +6594,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                     readOnly={!isEditing}
                   />
                   {isEditing && caseData.penaltyDecision && (
-                    <button type="button" className="btn btn-danger btn-xs" onClick={()=>setCaseData(prev=>({...prev,penaltyDecision:''}))}>🗑️</button>
+                    <button type="button" className="btn btn-danger btn-xs" onClick={()=>requestSecure('Số QĐ xử phạt (xóa)', () => setCaseData(prev=>({...prev,penaltyDecision:''})))}>🗑️</button>
                   )}
                   </div>
                 </div>
@@ -6462,6 +6818,196 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       );
     };
     
+   // ==================== SECURE FIELDS + COMPONENTS ====================
+    // Danh sách 20 trường bảo mật yêu cầu nhập mật khẩu khi thay đổi/xóa
+    const SECURE_FIELDS = {
+      administrativeRecordNumber: 'Số Biên bản XPHC',
+      reportDate:                 'Ngày lập biên bản',
+      administrativeDecisionNumber: 'Số QĐ xử phạt (ĐT)',
+      decisionDate:               'Ngày QĐ xử phạt (ĐT)',
+      prosecutionDecisionObj:     'Số QĐ khởi tố Bị Can',
+      prosecutionDateObj:         'Ngày khởi tố Bị Can',
+      custodyDecisionNumber:      'Số QĐ tạm giữ',
+      custodyDecisionDate:        'Ngày QĐ tạm giữ',
+      detentionDecisionNumber:    'Số QĐ tạm giam',
+      detentionDecisionDate:      'Ngày QĐ tạm giam',
+      qdKtbcSo:                   'Số QĐ khởi tố Bị Can (BB)',
+      qdKtbcNgay:                 'Ngày QĐ khởi tố Bị Can (BB)',
+      lenhKhamXetSo:              'Số lệnh khám xét',
+      lenhKhamXetNgay:            'Ngày lệnh khám xét',
+      lenhBatSo:                  'Số lệnh bắt',
+      lenhBatNgay:                'Ngày lệnh bắt',
+      lenhTamGiuSo:               'Số lệnh tạm giữ',
+      lenhTamGiuNgay:             'Ngày lệnh tạm giữ',
+      lenhTamGiamSo:              'Số lệnh tạm giam',
+      lenhTamGiamNgay:            'Ngày lệnh tạm giam',
+      prosecutionDecision:        'Số QĐ khởi tố vụ án',
+      prosecutionDate:            'Ngày khởi tố vụ án',
+      penaltyDecision:            'Số QĐ xử phạt (vụ việc)',
+      penaltyDate:                'Ngày QĐ xử phạt (vụ việc)',
+    };
+
+    // Modal yêu cầu nhập mật khẩu trước khi thay đổi trường bảo mật
+    const SecurePasswordModal = ({ fieldLabel, onConfirm, onCancel }) => {
+      const [pwd, setPwd] = React.useState('');
+      const [err, setErr] = React.useState('');
+      const [busy, setBusy] = React.useState(false);
+      const ref = React.useRef(null);
+      React.useEffect(() => { setTimeout(() => ref.current && ref.current.focus(), 80); }, []);
+
+      const verify = async () => {
+        if (!pwd) { setErr('Vui lòng nhập mật khẩu.'); return; }
+        setBusy(true); setErr('');
+        const uname = sessionStorage.getItem('username') || 'admin';
+        const user = await getUserFromDB(uname).catch(() => null);
+        if (!user) { setErr('Không tìm thấy tài khoản.'); setBusy(false); return; }
+        const hash = await hashPassword(pwd);
+        if (hash === user.password) {
+          writeAuditLog('SECURE_FIELD_OK', { field: fieldLabel });
+          onConfirm();
+        } else {
+          writeAuditLog('SECURE_FIELD_DENIED', { field: fieldLabel, note: 'Sai mật khẩu' });
+          setErr('❌ Mật khẩu không đúng! Hành động đã được ghi vào nhật ký bảo mật.');
+          try { AudioManager.warningSound(); } catch(_) {}
+        }
+        setBusy(false);
+      };
+
+      return (
+        <div className="modal-overlay" style={{zIndex:99998}}>
+          <div className="modal-box" style={{width:'410px',maxWidth:'96vw'}}>
+            <div className="modal-header" style={{background:'linear-gradient(135deg,#7f1d1d,#b91c1c)'}}>
+              🔐 Xác Thực Bảo Mật
+              <button className="modal-close" onClick={onCancel}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:'8px',padding:'10px 14px',marginBottom:'14px'}}>
+                <div style={{fontWeight:700,color:'#c2410c',marginBottom:'4px'}}>⚠️ Trường bảo mật — đã có dữ liệu</div>
+                <div style={{fontSize:'12px',color:'#78350f',lineHeight:'1.5'}}>
+                  Trường <b style={{color:'#dc2626'}}>{fieldLabel}</b> là thông tin tố tụng pháp lý quan trọng.
+                  Nhập mật khẩu đăng nhập để xác nhận thay đổi / xóa.
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">🔑 Mật khẩu đăng nhập</label>
+                <input ref={ref} type="password" className={`form-control${err?' error':''}`}
+                  value={pwd} onChange={e=>{setPwd(e.target.value);setErr('');}}
+                  onKeyDown={e=>e.key==='Enter'&&verify()}
+                  placeholder="Nhập mật khẩu của bạn..." autoComplete="current-password" />
+                {err && <div style={{color:'#dc2626',fontSize:'12px',marginTop:'4px',fontWeight:600}}>{err}</div>}
+              </div>
+              <div style={{fontSize:'11px',color:'#94a3b8',background:'#f8fafc',borderRadius:'6px',padding:'8px',marginTop:'4px'}}>
+                💡 Mọi lần xác thực (kể cả thất bại) đều được ghi vào <b>Nhật Ký Bảo Mật</b> kèm thời gian và IP thiết bị.
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-gray" onClick={onCancel}>Hủy</button>
+              <button className="btn btn-danger" onClick={verify} disabled={busy}>
+                {busy ? '⏳ Đang xác thực...' : '🔐 Xác nhận thay đổi'}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // View hiển thị Nhật Ký Bảo Mật
+    const AuditLogView = () => {
+      const [logs, setLogs] = React.useState([]);
+      const [loading, setLoading] = React.useState(true);
+      const [filter, setFilter] = React.useState('all');
+      const [search, setSearch] = React.useState('');
+      const [clearing, setClearing] = React.useState(false);
+
+      const load = async () => { setLoading(true); setLogs(await _idbLoadAuditLogs(500)); setLoading(false); };
+      React.useEffect(() => { load(); }, []);
+
+      const COLOR = {
+        LOGIN_OK:            { bg:'#dcfce7', c:'#15803d', lbl:'🔓 Đăng nhập thành công' },
+        LOGOUT:              { bg:'#f1f5f9', c:'#475569', lbl:'🔒 Đăng xuất' },
+        LOGIN_FAIL:          { bg:'#fee2e2', c:'#dc2626', lbl:'❌ Đăng nhập thất bại' },
+        SECURE_FIELD_OK:     { bg:'#dbeafe', c:'#1d4ed8', lbl:'✅ Thay đổi trường bảo mật' },
+        SECURE_FIELD_DENIED: { bg:'#fee2e2', c:'#dc2626', lbl:'🚫 Từ chối – sai mật khẩu' },
+        DELETE_CASE:         { bg:'#ffedd5', c:'#c2410c', lbl:'🗑️ Xóa vụ việc' },
+        PASSWORD_CHANGED:    { bg:'#f5f3ff', c:'#7c3aed', lbl:'🔑 Đổi mật khẩu' },
+        AUDIT_CLEARED:       { bg:'#fef9c3', c:'#854d0e', lbl:'🗂️ Đã xóa nhật ký' },
+      };
+      const displayed = logs.filter(l => {
+        const mf = filter === 'all' || l.action === filter;
+        const ms = !search || JSON.stringify(l).toLowerCase().includes(search.toLowerCase());
+        return mf && ms;
+      });
+      const clearAll = async () => {
+        if (!confirm('Xóa toàn bộ nhật ký? Không thể hoàn tác!')) return;
+        setClearing(true);
+        await _idbClearAuditLogs();
+        writeAuditLog('AUDIT_CLEARED', {});
+        await load();
+        setClearing(false);
+      };
+      return (
+        <div>
+          <div className="page-header" style={{marginBottom:'12px'}}>
+            <div className="page-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/></svg>
+              Nhật Ký Bảo Mật (Audit Log)
+              <span style={{marginLeft:8,background:'#fee2e2',color:'#991b1b',borderRadius:99,padding:'2px 10px',fontSize:11,fontWeight:700}}>{logs.length} bản ghi</span>
+            </div>
+            <div style={{display:'flex',gap:'6px'}}>
+              <button className="btn btn-primary btn-sm" onClick={load} disabled={loading}>🔄 Làm mới</button>
+              <button className="btn btn-danger btn-sm" onClick={clearAll} disabled={clearing}>🗑️ Xóa log</button>
+            </div>
+          </div>
+          <div style={{display:'flex',gap:'8px',marginBottom:'12px',flexWrap:'wrap'}}>
+            <input type="text" className="form-control" style={{flex:1,minWidth:180}} placeholder="🔍 Tìm theo user, IP, trường..." value={search} onChange={e=>setSearch(e.target.value)} />
+            <select className="form-control" style={{width:220}} value={filter} onChange={e=>setFilter(e.target.value)}>
+              <option value="all">Tất cả hành động</option>
+              <option value="LOGIN_OK">Đăng nhập thành công</option>
+              <option value="LOGIN_FAIL">Đăng nhập thất bại</option>
+              <option value="SECURE_FIELD_OK">Thay đổi trường được phép</option>
+              <option value="SECURE_FIELD_DENIED">Thay đổi bị từ chối</option>
+              <option value="DELETE_CASE">Xóa vụ việc</option>
+              <option value="PASSWORD_CHANGED">Đổi mật khẩu</option>
+            </select>
+          </div>
+          {loading ? (
+            <div style={{textAlign:'center',padding:'48px',color:'#94a3b8'}}>⏳ Đang tải nhật ký...</div>
+          ) : displayed.length === 0 ? (
+            <div style={{textAlign:'center',padding:'48px',color:'#94a3b8',background:'white',borderRadius:10,border:'1px solid #e2e8f0'}}>📋 Không có bản ghi nào.</div>
+          ) : (
+            <div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
+              {displayed.map((l, i) => {
+                const c = COLOR[l.action] || { bg:'#f1f5f9', c:'#374151', lbl: l.action };
+                return (
+                  <div key={i} style={{background:'white',borderRadius:8,border:'1px solid #e2e8f0',padding:'10px 14px',boxShadow:'0 1px 2px rgba(0,0,0,0.05)'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',marginBottom:4}}>
+                      <span style={{background:c.bg,color:c.c,borderRadius:99,padding:'2px 10px',fontSize:'11px',fontWeight:700,flexShrink:0}}>{c.lbl}</span>
+                      <span style={{fontSize:'11px',color:'#64748b'}}>🕐 {l.display||l.timestamp}</span>
+                      <span style={{fontSize:'12px',color:'#1e293b',fontWeight:600}}>👤 {l.user}</span>
+                      {l.ip && l.ip!=='N/A' && <span style={{fontSize:'11px',color:'#0369a1',fontWeight:700}}>🌐 IP: {l.ip}</span>}
+                    </div>
+                    {(l.field||l.caseId||l.note||l.attemptUser) && (
+                      <div style={{fontSize:'12px',color:'#374151',paddingLeft:2}}>
+                        {l.field && <span style={{marginRight:12}}>📝 Trường: <b>{l.field}</b></span>}
+                        {l.caseId && <span style={{marginRight:12}}>📁 Vụ: <b>{l.caseId}</b></span>}
+                        {l.attemptUser && <span style={{marginRight:12,color:'#dc2626'}}>⚠️ Tài khoản thử: <b>{l.attemptUser}</b></span>}
+                        {l.note && <span style={{color:l.action&&(l.action.includes('DENIED')||l.action.includes('FAIL'))?'#dc2626':'#374151'}}>💬 {l.note}</span>}
+                      </div>
+                    )}
+                    {l.device && (
+                      <div style={{fontSize:'10px',color:'#94a3b8',marginTop:3}}>
+                        💻 {l.device.platform} · 📱 {l.device.screen} · 🌍 {l.device.tz} · UA: {l.device.ua&&l.device.ua.substring(0,60)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    };
+
    // ==================== LoginForm Component ====================
     const LoginForm = ({ setLoggedIn, setErrorMessage, setUsername, setPassword, username, password }) => {
       const [shake, setShake] = useState(false);
@@ -6519,7 +7065,9 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               sessionStorage.setItem('loggedIn', 'true');
               sessionStorage.setItem('username', username);
               setLoggedIn(true);
+              writeAuditLog('LOGIN_OK', { note: 'Đăng nhập thành công' });
             } else {
+              writeAuditLog('LOGIN_FAIL', { note: 'Sai thông tin đăng nhập', attemptUser: username });
               setLoginError('Tên đăng nhập hoặc mật khẩu không đúng.');
               setShake(true);
               setTimeout(function(){ setShake(false); }, 500);
@@ -6669,6 +7217,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           };
           return saveUserToDB(user);
         }).then(function() {
+          writeAuditLog('PASSWORD_CHANGED', { note: `Đổi tài khoản: ${sessionStorage.getItem('username')} → ${newUsername || sessionStorage.getItem('username')}` });
           setErrorMessage(null);
           setShowChangeForm(false);
           sessionStorage.clear();
@@ -7405,6 +7954,11 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       
       // Authentication state
       const [loggedIn, setLoggedIn] = useState(!!sessionStorage.getItem('loggedIn'));
+      // Secure action queue: { label, action }
+      const [secureQueue, setSecureQueue] = useState(null);
+      const requestSecure = useCallback((label, action) => {
+        setSecureQueue({ label, action });
+      }, []);
       const [username, setUsername] = useState('');
       const [password, setPassword] = useState('');
       const [showChangeForm, setShowChangeForm] = useState(false);
@@ -7433,6 +7987,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       }, [resetIdleTimer]);
       
       const handleLogout = useCallback(() => {
+        writeAuditLog('LOGOUT', {});
         sessionStorage.clear();
         setLoggedIn(false);
         setViewMode('list');
@@ -7458,34 +8013,111 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         }
       }, [loggedIn, handleActivity, resetIdleTimer]);
       
-      // Initialize database and load data
+      // ── Initialize: Phase 1 = IndexedDB instant, Phase 2 = Firestore background ──
+      // PHOTO SAFETY RULE:
+      //   Never call setCases() or _idbSaveCases() with photo-less data.
+      //   Always merge fully before touching state or IDB.
       useEffect(() => {
-        migrateFromLocalStorage()
-          .then(function() { return loadCasesFromDB(); })
-          .then(function(loadedCases) {
-            console.log('Loaded cases from DB:', loadedCases);
-            setCases(validateCases(loadedCases));
-            return loadListsFromDB();
-          })
-          .then(function(lists) {
-            setCaseTypesList(lists[0] || defaultCaseTypes);
-            setAssigneesList(lists[1] || defaultAssignees);
-            setReceivingUnitsList(lists[2] || defaultReceivingUnits);
-            setHandlingMethodsList(lists[3] || handlingMethods);
-            return getUserFromDB('admin');
-          })
-          .then(function(defaultUser) {
-            if (!defaultUser) {
-              return hashPassword('password').then(function(hashedPass) {
-                return saveUserToDB({ username: 'admin', password: hashedPass });
-              });
+        let cancelled = false;
+
+        async function initApp() {
+          // ── Phase 1: IndexedDB → instant render (< 100ms) ─────────────
+          await migrateFromLocalStorage().catch(() => {});
+
+          const localLists = await _idbLoadLists().catch(() => [null,null,null,null]);
+          if (!cancelled) {
+            setCaseTypesList(localLists[0] || defaultCaseTypes);
+            setAssigneesList(localLists[1] || defaultAssignees);
+            setReceivingUnitsList(localLists[2] || defaultReceivingUnits);
+            setHandlingMethodsList(localLists[3] || handlingMethods);
+          }
+
+          // localCases includes photos — used both for instant render AND as
+          // the fallback photo source during cloud sync below.
+          const localCases = await _idbLoadCases().catch(() => []);
+          if (!cancelled && localCases.length > 0) {
+            setCases(validateCases(localCases));  // fast render with local photos
+          }
+
+          // Ensure admin user exists
+          const localAdmin = await _idbGetUser('admin').catch(() => null);
+          if (!localAdmin) {
+            const hp = await hashPassword('password').catch(() => null);
+            if (hp) await saveUserToDB({ username: 'admin', password: hp }).catch(() => {});
+          }
+
+          // ── Phase 2: Firestore background sync ────────────────────────
+          if (!firestoreDB || cancelled) return;
+
+          try {
+            // Sync lists (no photos involved, safe)
+            const cloudLists = await _firestoreLoadLists().catch(() => null);
+            if (!cancelled && cloudLists && cloudLists.some(l => l !== null)) {
+              setCaseTypesList(cloudLists[0] || defaultCaseTypes);
+              setAssigneesList(cloudLists[1] || defaultAssignees);
+              setReceivingUnitsList(cloudLists[2] || defaultReceivingUnits);
+              setHandlingMethodsList(cloudLists[3] || handlingMethods);
+              await _idbSaveLists({ caseTypes: cloudLists[0], assignees: cloudLists[1],
+                receivingUnits: cloudLists[2], handlingMethods: cloudLists[3] }).catch(() => {});
             }
-          })
-          .catch(function(error) {
-            console.error('Initialization error:', error);
-            setErrorMessage('Lỗi khi khởi tạo ứng dụng.');
-          });
+
+            // Sync cases + photos atomically:
+            // STEP A — Snapshot local photo map BEFORE any IDB write
+            //   (localCases still has photos, IDB not yet touched)
+            const localPhotoMap = _buildLocalPhotoMap(localCases);
+
+            // STEP B — Fetch cloud metadata + cloud photos IN PARALLEL
+            const [cloudCases, cloudPhotoSnap] = await Promise.all([
+              _firestoreLoadCases().catch(() => null),
+              firestoreDB.collection('photos').get().catch(() => null),
+            ]);
+
+            if (!cancelled && cloudCases && cloudCases.length > 0) {
+              // STEP C — Build cloud photo map (includes _savedAt for priority logic)
+              const cloudPhotoMap = {};
+              if (cloudPhotoSnap) {
+                cloudPhotoSnap.docs.forEach(d => {
+                  const data = d.data();
+                  cloudPhotoMap[data.caseId + '_' + data.objIndex] = {
+                    photo:      data.photo      || '',
+                    photoLeft:  data.photoLeft  || '',
+                    photoRight: data.photoRight || '',
+                    _savedAt:   data._savedAt   || '',
+                  };
+                });
+              }
+              console.log('[Firebase] \u2705 Loaded', cloudCases.length,
+                'cases,', Object.keys(cloudPhotoMap).length, 'photo docs');
+
+              // STEP D — Merge: metadata + cloud photos + local photos fallback
+              const merged = validateCases(_injectPhotos(cloudCases, cloudPhotoMap, localPhotoMap));
+
+              if (!cancelled) {
+                // STEP E — Single setCases with complete data (no photo-less intermediate)
+                //   Auto-save fires once with full merged data → IDB safe
+                setCases(merged);
+                await _idbSaveCases(merged).catch(() => {});
+              }
+            }
+
+            // Sync admin user
+            const cloudAdmin = await _firestoreGetUser('admin').catch(() => null);
+            if (!cancelled && cloudAdmin) await _idbSaveUser(cloudAdmin).catch(() => {});
+
+          } catch (e) {
+            console.warn('[Firebase] Background sync error:', e.message);
+          }
+        }
+
+        initApp().catch(e => {
+          console.error('Initialization error:', e);
+          if (!cancelled) setErrorMessage('Lỗi khi khởi tạo ứng dụng.');
+        });
+
+        return () => { cancelled = true; };
       }, []);
+
+
       
       // Auto-save cases to database (debounced)
       useEffect(() => {
@@ -7837,6 +8469,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const handleDeleteCase = useCallback(() => {
         console.log('Deleting case with id:', deleteCaseId);
         const deletedCase = cases.find(c => c.id === deleteCaseId);
+        writeAuditLog('DELETE_CASE', { caseId: deleteCaseId });
         setUndoData({ type: 'case', data: deletedCase });
         // 1. Update React state immediately
         setCases(prev => prev.filter(c => c.id !== deleteCaseId));
@@ -8795,6 +9428,16 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 Xuất dữ liệu Excel
               </button>
 
+              <div className="sidebar-section-label">Bảo Mật</div>
+              <button
+                className={`sidebar-btn ${viewMode === 'auditLog' ? 'active' : ''}`}
+                onClick={() => { setShowForm(false); setShowObjectForm(false); setViewMode('auditLog'); }}
+                style={{color:'#fca5a5'}}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/></svg>
+                Nhật Ký Bảo Mật
+              </button>
+
               <div className="sidebar-section-label">Cài Đặt</div>
               <button className="sidebar-btn pink-btn" onClick={() => setShowChangeForm(true)}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -8847,6 +9490,14 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           
           {/* Toast Container */}
           <ToastContainer toasts={toasts} removeToast={removeToast} />
+          {/* Secure field password confirmation */}
+          {secureQueue && (
+            <SecurePasswordModal
+              fieldLabel={secureQueue.label}
+              onConfirm={() => { secureQueue.action(); setSecureQueue(null); }}
+              onCancel={() => setSecureQueue(null)}
+            />
+          )}
             {showEditLists && (
               <EditListsModal
                 showEditLists={showEditLists}
@@ -8884,6 +9535,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             
             {showObjectForm ? (
               <ObjectForm
+                requestSecure={requestSecure}
                 objectData={objectData}
                 setObjectData={setObjectData}
                 tempObjects={tempObjects}
@@ -8901,6 +9553,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               />
             ) : showForm ? (
               <CaseForm
+                requestSecure={requestSecure}
                 caseData={caseData}
                 setCaseData={setCaseData}
                 tempObjects={tempObjects}
@@ -8930,6 +9583,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               <TinhHanComponent cases={cases} />
             ) : viewMode === 'statistics' ? (
               <StatisticsView cases={cases} />
+            ) : viewMode === 'auditLog' ? (
+              <AuditLogView />
             ) : viewMode === 'report' ? (
               <div>
                 <div className="page-header">
