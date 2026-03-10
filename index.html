@@ -906,25 +906,24 @@
     }
 
     // Save photos separately to Firestore 'photos' collection
+    // FIXED: Always write all photo fields (even empty strings) so photo deletions are persisted.
+    // Previously, deleted photos (empty string) were never written, so old photos would re-appear on refresh.
     async function _firestoreSavePhotos(cases) {
       if (!firestoreDB) return;
       for (let _ci = 0; _ci < cases.length; _ci++) {
         const c = cases[_ci];
-        if (!c.objects) continue;
+        if (!c.objects || c.objects.length === 0) continue;
         for (let i = 0; i < c.objects.length; i++) {
           const obj = c.objects[i];
-          const hasPhoto = (obj.photo||'').startsWith('data:');
-          const hasPhotoL = (obj.photoLeft||'').startsWith('data:');
-          const hasPhotoR = (obj.photoRight||'').startsWith('data:');
-          if (hasPhoto || hasPhotoL || hasPhotoR) {
-            try {
-              const payload = { caseId: c.id, objIndex: i };
-              if (hasPhoto) payload.photo = obj.photo;
-              if (hasPhotoL) payload.photoLeft = obj.photoLeft;
-              if (hasPhotoR) payload.photoRight = obj.photoRight;
-              await firestoreDB.collection('photos').doc(c.id + '_' + i).set(payload, { merge: true });
-            } catch(e) { console.warn('[Firebase] Photo save failed:', e.message); }
-          }
+          // Normalize: only keep base64 data URIs, otherwise store empty string
+          const photo      = (obj.photo||'').startsWith('data:')      ? obj.photo      : '';
+          const photoLeft  = (obj.photoLeft||'').startsWith('data:')  ? obj.photoLeft  : '';
+          const photoRight = (obj.photoRight||'').startsWith('data:') ? obj.photoRight : '';
+          try {
+            // Use set() WITHOUT merge so empty strings explicitly overwrite old data (handles deletion)
+            const payload = { caseId: c.id, objIndex: i, photo, photoLeft, photoRight };
+            await firestoreDB.collection('photos').doc(c.id + '_' + i).set(payload);
+          } catch(e) { console.warn('[Firebase] Photo save failed:', e.message); }
         }
       }
     }
@@ -938,17 +937,20 @@
         snap.docs.forEach(d => {
           const data = d.data();
           const key = `${data.caseId}_${data.objIndex}`;
-          photoMap[key] = { photo: data.photo||'', photoLeft: data.photoLeft||'', photoRight: data.photoRight||'' };
+          // Store exactly what Firestore has (including empty string = user deleted the photo)
+          photoMap[key] = { photo: data.photo||'', photoLeft: data.photoLeft||'', photoRight: data.photoRight||'', _exists: true };
         });
         return cases.map(c => ({
           ...c,
           objects: (c.objects || []).map((obj, i) => {
             const pm = photoMap[`${c.id}_${i}`] || {};
+            // FIXED: If Firestore has a doc for this object, trust its values exactly (even empty = deleted).
+            // Only fall back to obj.photo if no Firestore doc exists at all (_exists is falsy).
             return {
               ...obj,
-              photo:      pm.photo      || obj.photo      || '',
-              photoLeft:  pm.photoLeft  || obj.photoLeft  || '',
-              photoRight: pm.photoRight || obj.photoRight || '',
+              photo:      pm._exists ? pm.photo      : (obj.photo      || ''),
+              photoLeft:  pm._exists ? pm.photoLeft  : (obj.photoLeft  || ''),
+              photoRight: pm._exists ? pm.photoRight : (obj.photoRight || ''),
             };
           })
         }));
@@ -973,9 +975,11 @@
               const loc = local.objects[i] || {};
               return {
                 ...obj,
-                photo:      loc.photo      || obj.photo      || '',
-                photoLeft:  loc.photoLeft  || obj.photoLeft  || '',
-                photoRight: loc.photoRight || obj.photoRight || '',
+                // FIXED: Trust cloud (obj) value if it already has data (from Firestore).
+                // Only use local cache if cloud has no photo (avoids restoring deleted photos).
+                photo:      obj.photo      ? obj.photo      : (loc.photo      || ''),
+                photoLeft:  obj.photoLeft  ? obj.photoLeft  : (loc.photoLeft  || ''),
+                photoRight: obj.photoRight ? obj.photoRight : (loc.photoRight || ''),
               };
             })
           };
@@ -2192,6 +2196,7 @@ const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjInd
       const p = `{doituong${i+1}_`;
       Object.assign(replacements, {
         [`${p}ho_va_ten}`]: dt.name || '',
+        [`${p}ho_va_ten_hoa}`]: (dt.name || '').toUpperCase(),  // Viết in hoa: dùng {doituong1_ho_va_ten_hoa}
         [`${p}ten_goi_khac}`]: dt.alias || '',
         [`${p}gioi_tinh}`]: dt.gender || '',
         [`${p}ngay_sinh}`]: fmtDateVN(dt.birthDate),
@@ -2367,11 +2372,9 @@ const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjInd
         // ── Ngày hôm nay ─────────────────────────────────────────────
         [`${p}ngay_hom_nay}`]: fmtDateVN(new Date().toISOString().split('T')[0]),
         [`${p}ngay_hom_nay_short}`]: fmtDateShort(new Date().toISOString().split('T')[0]),
-        // ── Ảnh (fallback text nếu không có ảnh) ──────────────────────
-        [`${p}anh_chinh}`]: dt.photo ? '[Ảnh]' : '',
-        [`${p}anh_trai}`]: dt.photoLeft ? '[Ảnh]' : '',
-        [`${p}anh_phai}`]: dt.photoRight ? '[Ảnh]' : '',
-        [`${p}anh}`]: dt.photo ? '[Ảnh]' : '',
+        // NOTE: Image placeholders ({p}anh_chinh}, {p}anh_trai}, etc.) are intentionally NOT added here.
+        // They are handled by the image-injection step below which replaces them with actual inline drawings.
+        // Any image placeholder without actual data will be cleared by the final cleanup regex at the end.
       });
     });
 
@@ -3921,7 +3924,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 </div>
                 <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'12px',fontSize:'11px',color:'#374151',lineHeight:1.6}}>
                   <div style={{fontWeight:600,color:'#1e40af',marginBottom:'4px'}}>💡 Placeholder nhanh</div>
-                  {['{doituong1_ho_va_ten}','{doituong1_ngay_sinh_short}','{doituong1_so_cmnd}','{ma_vu_viec}','{don_vi}','{ngay_hom_nay_short}'].map(ph=>(
+                  {['{doituong1_ho_va_ten}','{doituong1_ho_va_ten_hoa}','{doituong1_ngay_sinh_short}','{doituong1_so_cmnd}','{ma_vu_viec}','{don_vi}','{ngay_hom_nay_short}'].map(ph=>(
                     <code key={ph} style={{background:'#dbeafe',borderRadius:'3px',padding:'1px 5px',marginRight:'4px',display:'inline-block',marginBottom:'3px'}}>{ph}</code>
                   ))}
                   <div style={{marginTop:'6px',color:'#64748b'}}>→ Xem đầy đủ trong tài liệu hướng dẫn hoặc tab <b>☁️ Thư viện</b></div>
@@ -4216,17 +4219,23 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         
         // Cha fields
         const chaTen = g('Họ và tên cha') || g('Họ tên cha') || g('Tên cha');
-        // Sinh năm cha: support "Sinh năm (cha):", "Sinh năm cha:", "Sinh năm:" in cha section
+        // Sinh năm cha: support "Sinh năm (cha):", "Sinh năm cha:", "Năm sinh (cha):"
+        // FIXED: Capture any text (not just \d{4}) so values like "không rõ", "mất", "1975" all work
         let chaSinhNam = null;
-        { const m = text.match(/Sinh\s+n[aă]m\s*[\(（]?\s*cha\s*[\)）]?\s*[:\-]\s*(\d{4})/i)
-                    || text.match(/N[aă]m\s+sinh\s*[\(（]?\s*cha\s*[\)）]?\s*[:\-]\s*(\d{4})/i); if (m) chaSinhNam = m[1]; }
+        { const m = text.match(/Sinh\s+n[aă]m\s*[\(（]?\s*cha\s*[\)）]?\s*[:\-]\s*([^\n;,]+)/i)
+                    || text.match(/N[aă]m\s+sinh\s*[\(（]?\s*cha\s*[\)）]?\s*[:\-]\s*([^\n;,]+)/i); if (m && m[1].trim()) chaSinhNam = m[1].trim(); }
         if (!chaSinhNam) {
-          // Try line-by-line: find line with "cha" then look for year on next line or same line
+          // Try line-by-line: find line with "cha" then look for sinh năm on next/same line
           let inCha = false;
           for (const l of lines) {
             const ll = l.toLowerCase();
             if (/\bcha\s*[:\-]/.test(ll)) { inCha = true; }
-            if (inCha && /sinh\s+n[aă]m/i.test(ll)) { const y = getYear(ll); if (y) { chaSinhNam = y; break; } }
+            if (inCha && /sinh\s+n[aă]m/i.test(ll)) {
+              // Extract value after label (any text), fall back to year-only if no explicit colon value
+              const afterColon = l.match(/sinh\s+n[aă]m\s*[:\-]\s*([^\n;,]+)/i);
+              if (afterColon && afterColon[1].trim()) { chaSinhNam = afterColon[1].trim(); break; }
+              const y = getYear(ll); if (y) { chaSinhNam = y; break; }
+            }
             if (inCha && /\bm[eẹ]\s*[:\-]/.test(ll)) break;
           }
         }
@@ -4235,15 +4244,20 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         
         // Mẹ fields
         const meTen = g('Họ và tên mẹ') || g('Họ tên mẹ') || g('Tên mẹ');
+        // FIXED: Capture any text for meSinhNam too (same logic as cha above)
         let meSinhNam = null;
-        { const m = text.match(/Sinh\s+n[aă]m\s*[\(（]?\s*m[eẹ]\s*[\)）]?\s*[:\-]\s*(\d{4})/i)
-                    || text.match(/N[aă]m\s+sinh\s*[\(（]?\s*m[eẹ]\s*[\)）]?\s*[:\-]\s*(\d{4})/i); if (m) meSinhNam = m[1]; }
+        { const m = text.match(/Sinh\s+n[aă]m\s*[\(（]?\s*m[eẹ]\s*[\)）]?\s*[:\-]\s*([^\n;,]+)/i)
+                    || text.match(/N[aă]m\s+sinh\s*[\(（]?\s*m[eẹ]\s*[\)）]?\s*[:\-]\s*([^\n;,]+)/i); if (m && m[1].trim()) meSinhNam = m[1].trim(); }
         if (!meSinhNam) {
           let inMe = false;
           for (const l of lines) {
             const ll = l.toLowerCase();
             if (/\bm[eẹ]\s*[:\-]/.test(ll)) { inMe = true; }
-            if (inMe && /sinh\s+n[aă]m/i.test(ll)) { const y = getYear(ll); if (y) { meSinhNam = y; break; } }
+            if (inMe && /sinh\s+n[aă]m/i.test(ll)) {
+              const afterColon = l.match(/sinh\s+n[aă]m\s*[:\-]\s*([^\n;,]+)/i);
+              if (afterColon && afterColon[1].trim()) { meSinhNam = afterColon[1].trim(); break; }
+              const y = getYear(ll); if (y) { meSinhNam = y; break; }
+            }
           }
         }
         const meNghe = g('Nghề nghiệp \\(mẹ\\)') || g('Nghề nghiệp mẹ');
