@@ -166,7 +166,7 @@
     .stat-card-value { font-size: 22px; font-weight: 800; color: #1e293b; line-height: 1.1; }
     .stat-card.blue  .stat-card-value { color: #1d4ed8; }
     .stat-card.green .stat-card-value { color: #15803d; }
-    .stat-card.orange.stat-card-value  { color: #c2410c; }
+    .stat-card.orange .stat-card-value { color: #c2410c; }
     .stat-card.red   .stat-card-value { color: #dc2626; }
     .stat-card-label { font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.4px; }
     .stat-card-sub   { font-size: 10px; color: #94a3b8; }
@@ -815,9 +815,10 @@
       try {
         if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
         firestoreDB = firebase.firestore();
-        // Dùng settings thay vì enablePersistence() (tránh deprecation warning)
+        // Cấu hình cache không giới hạn trước khi bật persistence
         firestoreDB.settings({ cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED });
-        // Bật offline persistence (bỏ qua lỗi nếu đã enable ở tab khác)
+        // Bật offline persistence — enablePersistence() vẫn cần dùng với Firebase v8 compat
+        // (Nếu nâng lên Firebase v9 modular thì dùng initializeFirestore + persistentLocalCache thay thế)
         firestoreDB.enablePersistence({ synchronizeTabs: true })
           .catch(err => {
             if (err.code === 'failed-precondition') {
@@ -1010,15 +1011,20 @@
     async function _firestoreSaveCases(cases) {
       if (!firestoreDB) return;
       const cloudCases = stripPhotosForCloud(cases);
-      const batch = firestoreDB.batch();
-      cloudCases.forEach(c => {
-        batch.set(firestoreDB.collection('cases').doc(c.id),
-          { ...c, _updatedAt: new Date().toISOString() });
-      });
-      await batch.commit();
+      const now = new Date().toISOString();
+      // C-1 FIX: Firestore batch tối đa 500 ops — chunk theo 499 để an toàn
+      const BATCH_LIMIT = 499;
+      for (let i = 0; i < cloudCases.length; i += BATCH_LIMIT) {
+        const chunk = cloudCases.slice(i, i + BATCH_LIMIT);
+        const batch = firestoreDB.batch();
+        chunk.forEach(c => {
+          batch.set(firestoreDB.collection('cases').doc(c.id),
+            { ...c, _updatedAt: now });
+        });
+        await batch.commit();
+      }
       // Photos saved non-blocking (with _savedAt timestamp)
       _firestoreSavePhotos(cases).catch(e => console.warn('[Firebase] Photos save failed:', e.message));
-      console.log('[Firebase] \u2705 Saved', cloudCases.length, 'cases');
       if (syncStatusCallback) syncStatusCallback('synced');
     }
 
@@ -1026,7 +1032,18 @@
 
     async function _firestoreDeleteCase(caseId) {
       if (!firestoreDB) return;
+      // Xóa case document
       await firestoreDB.collection('cases').doc(caseId).delete();
+      // Xóa tất cả ảnh liên quan trong collection photos (tránh rác tích tụ)
+      try {
+        const photoSnap = await firestoreDB.collection('photos')
+          .where('caseId', '==', caseId).get();
+        if (!photoSnap.empty) {
+          const batch = firestoreDB.batch();
+          photoSnap.docs.forEach(doc => batch.delete(doc.ref));
+          await batch.commit();
+        }
+      } catch(e) { console.warn('[Firebase] Photo cleanup failed:', e.message); }
     }
 
     async function _firestoreLoadCases() {
@@ -1088,7 +1105,13 @@
           _firestoreLoadCases().catch(() => null),
           firestoreDB.collection('photos').get().catch(() => null),
         ]);
-        if (!cloudCases || cloudCases.length === 0) return localCases;
+        if (!cloudCases) return localCases; // Firestore lỗi → dùng local
+        if (cloudCases.length === 0) {
+          // Firestore trống = tất cả vụ việc đã bị xóa từ thiết bị khác
+          // → đồng bộ: cập nhật local về rỗng, không giữ lại local cũ
+          await _idbSaveCases([]).catch(() => {});
+          return [];
+        }
         const cloudPhotoMap = {};
         if (cloudPhotoSnap) {
           cloudPhotoSnap.docs.forEach(d => {
@@ -1195,7 +1218,9 @@
     // Lấy IP cục bộ qua WebRTC (không cần server)
     function getLocalIPAsync() {
       return new Promise(resolve => {
-        const to = setTimeout(() => resolve('N/A'), 2500);
+        let resolved = false;
+        const done = (val) => { if (!resolved) { resolved = true; resolve(val); } };
+        const to = setTimeout(() => done('N/A'), 2500);
         try {
           const pc = new RTCPeerConnection({ iceServers: [] });
           pc.createDataChannel('');
@@ -1203,10 +1228,10 @@
           pc.onicecandidate = e => {
             if (!e || !e.candidate) return;
             const m = /([0-9]{1,3}\.){3}[0-9]{1,3}/.exec(e.candidate.candidate);
-            if (m) { clearTimeout(to); try { pc.close(); } catch(_) {} resolve(m[0]); }
+            if (m) { clearTimeout(to); try { pc.close(); } catch(_) {} done(m[0]); }
           };
-          setTimeout(() => { try { pc.close(); } catch(_) {} resolve('N/A'); }, 2200);
-        } catch(_) { clearTimeout(to); resolve('WebRTC N/A'); }
+          setTimeout(() => { try { pc.close(); } catch(_) {} done('N/A'); }, 2200);
+        } catch(_) { clearTimeout(to); done('WebRTC N/A'); }
       });
     }
 
@@ -1241,10 +1266,19 @@
     }
 
     async function migrateFromLocalStorage() {
-      if (localStorage.getItem('cases')) {
-        const parsedCases = JSON.parse(localStorage.getItem('cases'));
-        await saveCasesToDB(parsedCases);
+      const raw = localStorage.getItem('cases');
+      if (!raw) return;
+      // H-1 FIX: JSON.parse có thể throw nếu data cũ bị hỏng.
+      // Không wrap = exception bắt ở catch(()=>{}) bên ngoài → im lặng, không xóa data hỏng → lặp lỗi mỗi reload.
+      try {
+        const parsedCases = JSON.parse(raw);
+        if (Array.isArray(parsedCases)) {
+          await saveCasesToDB(parsedCases);
+        }
         localStorage.removeItem('cases');
+      } catch (e) {
+        console.warn('[Migration] localStorage "cases" bị hỏng, đã xóa:', e.message);
+        localStorage.removeItem('cases'); // xóa data hỏng để thoát vòng lặp
       }
     }
 
@@ -1818,11 +1852,23 @@ function backupCases(cases) {
 }
 
     // ==================== AUDIO MANAGER ====================
+    // M-4 FIX: Browsers require a user gesture before AudioContext can play.
+    // Resume the context on first click so warning sounds don't silently fail.
+    document.addEventListener('click', function resumeAudio() {
+      if (AudioManager.ctx && AudioManager.ctx.state === 'suspended') {
+        AudioManager.ctx.resume().catch(() => {});
+      }
+    }, { once: false });
+
     const AudioManager = {
       ctx: null,
       getCtx() {
         if (!this.ctx) {
           try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+        }
+        // Resume if suspended (Chrome autoplay policy)
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(() => {});
         }
         return this.ctx;
       },
@@ -2500,6 +2546,7 @@ const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjInd
         [`${p}noi_cai_nghien}`]: dt.noiCaiNghien || '',
         [`${p}loi_khai}`]: dt.loiKhai || '',
         [`${p}tam_giu}`]: dt.tamGiu || '',
+        [`${p}tam_giu_sau_kham_xet}`]: dt.tamGiuSauKhamXet || '',
         [`${p}ghi_chu}`]: dt.ghiChuBB || '',
         [`${p}noi_chuyen}`]: dt.noiChuyen || '',
         [`${p}thong_tin_dt2}`]: dt.thongTinDt2 || '',
@@ -2509,64 +2556,15 @@ const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjInd
         [`${p}thoi_diem_su_dung_dau}`]: fmtDateVN(dt.thoiDiemSuDungDau),
         [`${p}ngay_moi}`]: fmtDateVN(dt.invitationDate),
         [`${p}ngay_chuyen}`]: fmtDateVN(dt.ngayChuyen),
+        // ── Alias ngược để tương thích mẫu cũ (không có _so suffix) ──────────
         [`${p}qd_quan_ly}`]: dt.qdQuanLySo || '',
-        [`${p}ngay_qd_quan_ly}`]: fmtDateVN(dt.qdQuanLyNgay),
         [`${p}qd_cham_dut}`]: dt.qdChamDutSo || '',
-        [`${p}ngay_qd_cham_dut}`]: fmtDateVN(dt.qdChamDutNgay),
         [`${p}qd_dung}`]: dt.qdDungSo || '',
-        [`${p}ngay_qd_dung}`]: fmtDateVN(dt.qdDungNgay),
         [`${p}qd_quan_ly_nghien}`]: dt.qdQuanLyNghienSo || '',
-        [`${p}ngay_qd_quan_ly_nghien}`]: fmtDateVN(dt.qdQuanLyNghienNgay),
         [`${p}qd_xphc}`]: dt.qdXphcSo || '',
-        [`${p}ngay_qd_xphc}`]: fmtDateVN(dt.qdXphcNgay),
         [`${p}de_nghi_xac_nhan}`]: dt.deNghiXacNhanSo || '',
-        [`${p}ngay_de_nghi}`]: fmtDateVN(dt.deNghiXacNhanNgay),
-        [`${p}lenh_kham_xet_so}`]: dt.lenhKhamXetSo || '',
-        [`${p}lenh_kham_xet_ngay}`]: fmtDateVN(dt.lenhKhamXetNgay),
-        [`${p}qd_trung_cau_loai}`]: dt.qdTrungCauLoai || '',
-        [`${p}qd_trung_cau_so}`]: dt.qdTrungCauSo || '',
-        [`${p}qd_trung_cau_bbgn}`]: dt.qdTrungCauBbgn || '',
-        [`${p}qd_trung_cau_ngay}`]: fmtDateVN(dt.qdTrungCauNgay),
-        [`${p}qd_ktva_so}`]: dt.qdKtvaSo || '',
-        [`${p}qd_ktva_ngay}`]: fmtDateVN(dt.qdKtvaNgay),
-        [`${p}qd_ktbc_so}`]: dt.qdKtbcSo || '',
-        [`${p}qd_ktbc_ngay}`]: fmtDateVN(dt.qdKtbcNgay),
-        [`${p}lenh_bat_so}`]: dt.lenhBatSo || '',
-        [`${p}lenh_bat_ngay}`]: fmtDateVN(dt.lenhBatNgay),
-        [`${p}lenh_tam_giu_so}`]: dt.lenhTamGiuSo || '',
-        [`${p}lenh_tam_giu_ngay}`]: fmtDateVN(dt.lenhTamGiuNgay),
-        [`${p}lenh_tam_giam_so}`]: dt.lenhTamGiamSo || '',
-        [`${p}lenh_tam_giam_ngay}`]: fmtDateVN(dt.lenhTamGiamNgay),
-        // ── TAB BỔ SUNG ──────────────────────────────────────────────
-        [`${p}nhan_than}`]: dt.nhanThan || dt.tienAn || '',
-        [`${p}tien_an}`]: dt.tienAn || '',
-        [`${p}tien_su}`]: dt.tienSu || '',
-        [`${p}thong_tin_dt2}`]: dt.thongTinDt2 || '',
-        [`${p}ghi_chu_bb}`]: dt.ghiChuBB || '',
-        // ── TAB LỜI KHAI ─────────────────────────────────────────────
-        [`${p}loi_khai}`]: dt.loiKhai || '',
-        // ── TAB GIA ĐÌNH ─────────────────────────────────────────────
-        [`${p}cha_ten}`]: dt.chaTen || '',
-        [`${p}cha_sinh_nam}`]: dt.chaSinhNam || '',
-        [`${p}cha_nghe_nghiep}`]: dt.chaNgheNghiep || '',
-        [`${p}cha_noi_o}`]: dt.chaNoiO || '',
-        [`${p}me_ten}`]: dt.meTen || '',
-        [`${p}me_sinh_nam}`]: dt.meSinhNam || '',
-        [`${p}me_nghe_nghiep}`]: dt.meNgheNghiep || '',
-        [`${p}me_noi_o}`]: dt.meNoiO || '',
-        // ── TAB MA TÚY ───────────────────────────────────────────────
-        [`${p}loai_ma_tuy}`]: dt.loaiMaTuy || '',
-        [`${p}hinh_thuc_su_dung}`]: dt.hinhThucSuDung || '',
-        [`${p}noi_su_dung}`]: dt.noiSuDung || '',
-        [`${p}ngay_xet_nghiem}`]: fmtDateVN(dt.ngayXetNghiem),
-        [`${p}ngay_xet_nghiem_short}`]: fmtDateShort(dt.ngayXetNghiem),
-        [`${p}ngay_xac_dinh_nghien}`]: fmtDateVN(dt.ngayXacDinhNghien),
-        [`${p}ngay_xac_dinh_nghien_short}`]: fmtDateShort(dt.ngayXacDinhNghien),
-        [`${p}ngay_lap_ho_so}`]: fmtDateVN(dt.ngayLapHoSo),
-        [`${p}ngay_lap_ho_so_short}`]: fmtDateShort(dt.ngayLapHoSo),
-        [`${p}thoi_diem_su_dung_dau}`]: dt.thoiDiemSuDungDau || '',
-        [`${p}noi_cai_nghien}`]: dt.noiCaiNghien || '',
-        // ── TAB QUYẾT ĐỊNH ───────────────────────────────────────────
+        // BUG FIX #6: Xóa 16 key trùng lặp không có _short → chỉ giữ block đầy đủ dưới đây.
+        // ── TAB QUYẾT ĐỊNH (đầy đủ, có _short variants) ─────────────────────
         [`${p}qd_quan_ly_so}`]: dt.qdQuanLySo || '',
         [`${p}qd_quan_ly_ngay}`]: fmtDateVN(dt.qdQuanLyNgay),
         [`${p}qd_quan_ly_ngay_short}`]: fmtDateShort(dt.qdQuanLyNgay),
@@ -4031,8 +4029,50 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const [selectedObjs, setSelectedObjs] = React.useState([]);
       const [templateFile, setTemplateFile] = React.useState(null);
       const [templateName, setTemplateName] = React.useState('');
+      const [templateFiles, setTemplateFiles] = React.useState([]); // multi-file list
       const [exporting, setExporting] = React.useState(false);
       const [activeTab, setActiveTab] = React.useState('export');
+      // Folder selection state
+      const [saveFolder, setSaveFolder] = React.useState(null);
+      const [saveFolderName, setSaveFolderName] = React.useState('');
+      const [folderSupported] = React.useState(() => typeof window !== 'undefined' && 'showDirectoryPicker' in window);
+
+      // Chọn folder lưu file
+      const handlePickFolder = async () => {
+        try {
+          const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+          setSaveFolder(dirHandle);
+          setSaveFolderName(dirHandle.name);
+          addToast('✅ Đã chọn folder: ' + dirHandle.name, 'success');
+        } catch (e) {
+          if (e.name !== 'AbortError') addToast('Không thể chọn folder: ' + e.message, 'error');
+        }
+      };
+
+      // State hiển thị kết quả xuất file
+      const [exportResult, setExportResult] = React.useState(null); // {folderName, files:[]}
+
+
+      // Lưu blob vào folder hoặc fallback download
+      const saveBlob = async (blob, filename) => {
+        if (saveFolder) {
+          try {
+            const fileHandle = await saveFolder.getFileHandle(filename, { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            return true;
+          } catch (e) {
+            addToast('Lỗi lưu vào folder: ' + e.message + ' — thử download thông thường', 'warning');
+          }
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); document.body.removeChild(a); }, 300);
+        return false;
+      };
 
       // ── GitHub Template Library ────────────────────────────────────────
       const GH_KEY = 'vv_github_repo';
@@ -4099,10 +4139,14 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           })
           .then(blob => {
             const f = new File([blob], file.name, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+            setTemplateFiles(prev => {
+              if (prev.find(x => x.name === f.name)) return prev;
+              return [...prev, f];
+            });
             setTemplateFile(f);
             setTemplateName(file.name);
             setActiveTab('export');
-            addToast('✅ Đã tải mẫu "' + file.name + '" – chọn vụ việc rồi Xuất', 'success');
+            addToast('✅ Đã thêm mẫu "' + file.name + '" vào danh sách – chọn vụ việc rồi Xuất', 'success');
           })
           .catch(e => addToast('Lỗi tải file: ' + e.message, 'error'));
       };
@@ -4143,29 +4187,45 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const handleExport = () => {
         if (!selectedCase) { addToast('Vui lòng chọn vụ việc!','warning'); return; }
         if (selectedObjs.length === 0) { addToast('Vui lòng chọn ít nhất 1 đối tượng!','warning'); return; }
-        if (!templateFile) { addToast('Vui lòng chọn file Word mẫu (hoặc tải từ Thư viện)!','warning'); return; }
+        const allTemplates = templateFiles.length > 0 ? templateFiles : (templateFile ? [templateFile] : []);
+        if (allTemplates.length === 0) { addToast('Vui lòng chọn ít nhất 1 file Word mẫu (hoặc tải từ Thư viện)!','warning'); return; }
         setExporting(true);
-        exportWordTemplate(templateFile, selectedCase, objects, selectedObjs, getUnitSettings())
-          .then(result => {
+        const names = selectedObjs.map(function(i){ return (objects[i] && objects[i].name) || ''; }).filter(Boolean).join(' & ');
+        let savedToFolder = 0;
+        let savedByDownload = 0;
+        const savedFiles = [];
+        const exportNext = (idx) => {
+          if (idx >= allTemplates.length) {
             setExporting(false);
-            if (typeof result === 'string') { addToast(result,'error'); return; }
-            const url = URL.createObjectURL(result.blob);
-            const a = document.createElement('a'); a.href = url;
-            const names = selectedObjs.map(function(i){ return (objects[i] && objects[i].name) || ''; }).filter(Boolean).join(' & ');
-            a.download = result.filename.replace('.docx','') + ' - ' + names + '.docx';
-            a.click(); URL.revokeObjectURL(url);
-            addToast('Xuất file Word thành công!','success');
-          })
-          .catch(err => { setExporting(false); addToast('Lỗi xuất Word: ' + err.message, 'error'); });
+            setExportResult({
+              folderName: saveFolder ? saveFolderName : null,
+              files: savedFiles,
+              total: allTemplates.length,
+            });
+            return;
+          }
+          const tpl = allTemplates[idx];
+          exportWordTemplate(tpl, selectedCase, objects, selectedObjs, getUnitSettings())
+            .then(async result => {
+              if (typeof result === 'string') { addToast(result,'error'); exportNext(idx+1); return; }
+              const filename = result.filename.replace('.docx','') + ' - ' + names + '.docx';
+              const usedFolder = await saveBlob(result.blob, filename);
+              savedFiles.push(filename);
+              if (usedFolder) savedToFolder++; else savedByDownload++;
+              exportNext(idx+1);
+            })
+            .catch(err => { addToast('Lỗi xuất Word: ' + err.message, 'error'); exportNext(idx+1); });
+        };
+        exportNext(0);
       };
 
       const TABS = [
         ['export','📥 Xuất Word'],
         ['library','☁️ Thư viện GitHub'],
-        ['folders','📁 Folder'],
       ];
 
       return (
+        <>
         <div className="modal-overlay">
           <div className="modal-box" style={{width:'660px',maxHeight:'92vh',overflowY:'auto'}}>
             <div className="modal-header" style={{background:'linear-gradient(135deg,#15803d,#166534)'}}>
@@ -4211,25 +4271,63 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   </div>
                 )}
                 <div className="form-group">
-                  <label className="form-label">3. Chọn file Word mẫu (.docx)</label>
-                  {templateName && (
-                    <div style={{marginBottom:'6px',padding:'6px 10px',background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'6px',fontSize:'12px',color:'#15803d',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                      <span>☁️ Đang dùng mẫu từ thư viện: <b>{templateName}</b></span>
-                      <button onClick={()=>{setTemplateFile(null);setTemplateName('');}} style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:'16px'}}>×</button>
+                  <label className="form-label">3. Chọn file Word mẫu (.docx) — có thể chọn nhiều file</label>
+                  {templateFiles.length > 0 && (
+                    <div style={{marginBottom:'8px',border:'1px solid #86efac',borderRadius:'7px',overflow:'hidden'}}>
+                      {templateFiles.map((f,idx)=>(
+                        <div key={idx} style={{display:'flex',alignItems:'center',gap:'8px',padding:'6px 10px',background:idx%2===0?'#f0fdf4':'#fff',borderBottom:idx<templateFiles.length-1?'1px solid #dcfce7':'none'}}>
+                          <span style={{fontSize:'16px'}}>📝</span>
+                          <span style={{flex:1,fontSize:'12px',color:'#15803d',fontWeight:600}}>{f.name}</span>
+                          <button onClick={()=>setTemplateFiles(prev=>prev.filter((_,i)=>i!==idx))} style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',fontSize:'14px',lineHeight:1}}>×</button>
+                        </div>
+                      ))}
                     </div>
                   )}
                   <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
-                    <input type="file" accept=".docx" className="form-control" style={{flex:1}} onChange={e=>{setTemplateFile(e.target.files[0]);setTemplateName('');}} />
+                    <input type="file" accept=".docx" multiple className="form-control" style={{flex:1}} onChange={e=>{
+                      const newFiles = Array.from(e.target.files);
+                      setTemplateFiles(prev => {
+                        const existing = prev.map(f=>f.name);
+                        const toAdd = newFiles.filter(f=>!existing.includes(f.name));
+                        return [...prev, ...toAdd];
+                      });
+                      setTemplateName('');
+                      e.target.value = '';
+                    }} />
                     <button className="btn btn-primary btn-sm" style={{whiteSpace:'nowrap'}} onClick={()=>setActiveTab('library')}>☁️ Thư viện</button>
                   </div>
-                  {templateFile && !templateName && <div style={{marginTop:'6px',fontSize:'12px',color:'#15803d'}}>✓ File: {templateFile.name}</div>}
+                  {templateFiles.length === 0 && templateFile && !templateName && <div style={{marginTop:'6px',fontSize:'12px',color:'#15803d'}}>✓ File: {templateFile.name}</div>}
+                  {templateFiles.length > 0 && <div style={{marginTop:'6px',fontSize:'12px',color:'#15803d',fontWeight:600}}>✓ Đã chọn {templateFiles.length} file mẫu — sẽ xuất {templateFiles.length} file Word</div>}
                 </div>
-                <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'12px',fontSize:'11px',color:'#374151',lineHeight:1.6}}>
-                  <div style={{fontWeight:600,color:'#1e40af',marginBottom:'4px'}}>💡 Placeholder nhanh</div>
-                  {['{doituong1_ho_va_ten}','{doituong1_ho_va_ten_hoa}','{doituong1_ngay_sinh_short}','{doituong1_so_cmnd}','{ma_vu_viec}','{don_vi}','{ngay_hom_nay_short}'].map(ph=>(
-                    <code key={ph} style={{background:'#dbeafe',borderRadius:'3px',padding:'1px 5px',marginRight:'4px',display:'inline-block',marginBottom:'3px'}}>{ph}</code>
-                  ))}
-                  <div style={{marginTop:'6px',color:'#64748b'}}>→ Xem đầy đủ trong tài liệu hướng dẫn hoặc tab <b>☁️ Thư viện</b></div>
+
+                {/* ── CHỌN FOLDER LƯU FILE ── */}
+                <div className="form-group">
+                  <label className="form-label">📁 4. Chọn folder lưu file (tuỳ chọn)</label>
+                  {folderSupported ? (
+                    <div style={{display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap'}}>
+                      <button
+                        onClick={handlePickFolder}
+                        style={{display:'flex',alignItems:'center',gap:'6px',background:'linear-gradient(135deg,#1d4ed8,#2563eb)',color:'#fff',border:'none',borderRadius:'7px',padding:'7px 14px',fontWeight:700,fontSize:'12px',cursor:'pointer',boxShadow:'0 2px 6px rgba(37,99,235,0.3)',whiteSpace:'nowrap'}}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                        {saveFolder ? 'Đổi folder' : 'Chọn folder...'}
+                      </button>
+                      {saveFolder ? (<>
+                        <span style={{display:'flex',alignItems:'center',gap:'5px',background:'#f0fdf4',border:'1px solid #86efac',borderRadius:'6px',padding:'5px 10px',fontSize:'12px',fontWeight:700,color:'#15803d'}}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="#15803d" stroke="none"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                          {saveFolderName}
+                        </span>
+
+                        <button onClick={()=>{setSaveFolder(null);setSaveFolderName('');}} style={{background:'none',border:'1px solid #fca5a5',borderRadius:'6px',color:'#dc2626',cursor:'pointer',padding:'6px 9px',fontSize:'13px',fontWeight:700,lineHeight:1}}>✕</button>
+                      </>) : (
+                        <span style={{fontSize:'12px',color:'#94a3b8',fontStyle:'italic'}}>Chưa chọn — file sẽ vào thư mục Downloads</span>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{fontSize:'12px',color:'#64748b',background:'#f1f5f9',borderRadius:'7px',padding:'8px 12px'}}>
+                      ℹ️ Trình duyệt chưa hỗ trợ. File vào <b>Downloads</b> mặc định. Dùng <b>Chrome/Edge</b> để có tính năng này.
+                    </div>
+                  )}
                 </div>
               </>)}
 
@@ -4317,42 +4415,6 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 )}
               </>)}
 
-              {/* ── TAB: FOLDER ── */}
-              {activeTab === 'folders' && (<>
-                <div style={{marginBottom:'12px',fontSize:'12px',color:'#64748b',background:'#f8fafc',borderRadius:'7px',padding:'10px',border:'1px solid #e2e8f0'}}>
-                  <b>📁 Folder ảo (lưu trên trình duyệt):</b> Dùng để tổ chức hồ sơ theo cấu trúc thư mục. Thêm folder con trong <b>1_doi_tuong</b> để gom tài liệu từng đối tượng.
-                </div>
-                {Object.entries(folderTree).map(([rootName, rootContent])=>{
-                  const subs = Object.keys(rootContent).filter(k=>k!=='_files');
-                  const isExp = expandedFolders[rootName];
-                  return (
-                    <div key={rootName} style={{marginBottom:'6px'}}>
-                      <div onClick={()=>setExpandedFolders(prev=>({...prev,[rootName]:!prev[rootName]}))} style={{display:'flex',alignItems:'center',gap:'6px',padding:'8px 12px',background:'#f0f9ff',borderRadius:'7px',cursor:'pointer',userSelect:'none',border:'1px solid #bae6fd'}}>
-                        <span style={{fontSize:'11px',transition:'transform 0.15s',display:'inline-block',transform:isExp?'rotate(90deg)':'rotate(0deg)'}}>▶</span>
-                        <span style={{fontWeight:600}}>📁 {rootName}</span>
-                        <span style={{fontSize:'11px',color:'#64748b',marginLeft:'auto'}}>{subs.length} sub-folder</span>
-                      </div>
-                      {isExp && (
-                        <div style={{paddingLeft:'18px',marginTop:'4px'}}>
-                          {subs.length===0 && <div style={{fontSize:'11px',color:'#94a3b8',padding:'4px 8px'}}>Trống</div>}
-                          {subs.map(sub=>(
-                            <div key={sub} style={{display:'flex',alignItems:'center',gap:'8px',padding:'6px 10px',background:'#fff',borderRadius:'5px',marginBottom:'3px',border:'1px solid #e2e8f0'}}>
-                              <span>📂 {sub}</span>
-                              <button onClick={()=>deleteSubFolder(rootName,sub)} className="btn btn-danger btn-xs" style={{marginLeft:'auto',fontSize:'10px',padding:'1px 7px'}}>🗑️</button>
-                            </div>
-                          ))}
-                          {rootName==='1_doi_tuong' && (
-                            <div style={{display:'flex',gap:'6px',marginTop:'6px',alignItems:'center'}}>
-                              <input value={newFolderName} onChange={e=>setNewFolderName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addSubFolder(rootName)} placeholder="Tên folder con..." className="form-control" style={{flex:1,height:'30px',fontSize:'12px'}} />
-                              <button onClick={()=>addSubFolder(rootName)} className="btn btn-success btn-xs">+ Tạo</button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </>)}
             </div>
 
             <div className="modal-footer">
@@ -4370,6 +4432,69 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             </div>
           </div>
         </div>
+
+        {/* ── Modal thông báo xuất xong ── */}
+        {exportResult && (
+          <div className="modal-overlay" style={{zIndex:1100}}>
+            <div className="modal-box" style={{width:'480px'}}>
+              <div className="modal-header" style={{background:'linear-gradient(135deg,#15803d,#166534)'}}>
+                ✅ Xuất File Word Thành Công
+                <button className="modal-close" onClick={()=>setExportResult(null)}>×</button>
+              </div>
+              <div className="modal-body">
+                <div style={{textAlign:'center',marginBottom:'16px'}}>
+                  <div style={{fontSize:'48px',lineHeight:1,marginBottom:'8px'}}>📂</div>
+                  <div style={{fontWeight:700,fontSize:'15px',color:'#15803d'}}>
+                    Đã tạo xong {exportResult.total} file Word
+                  </div>
+                </div>
+
+                {exportResult.folderName ? (
+                  <div style={{background:'#f0fdf4',border:'1.5px solid #86efac',borderRadius:'10px',padding:'12px 16px',marginBottom:'12px'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="#15803d" stroke="none"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                      <span style={{fontWeight:700,fontSize:'13px',color:'#15803d'}}>Đã lưu vào folder:</span>
+                    </div>
+                    <div style={{background:'#dcfce7',borderRadius:'6px',padding:'8px 12px',fontFamily:'monospace',fontSize:'13px',fontWeight:700,color:'#166534',wordBreak:'break-all'}}>
+                      📁 {exportResult.folderName}
+                    </div>
+                    <div style={{marginTop:'10px',fontSize:'11.5px',color:'#166534',background:'#bbf7d0',borderRadius:'6px',padding:'7px 10px'}}>
+                      💡 <b>Cách mở folder:</b> Mở File Explorer (Windows + E) → điều hướng tới folder <b>"{exportResult.folderName}"</b>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{background:'#eff6ff',border:'1.5px solid #93c5fd',borderRadius:'10px',padding:'12px 16px',marginBottom:'12px'}}>
+                    <div style={{fontWeight:700,fontSize:'13px',color:'#1d4ed8',marginBottom:'6px'}}>📥 File đã tải về thư mục Downloads</div>
+                    <div style={{fontSize:'11.5px',color:'#1e40af',background:'#dbeafe',borderRadius:'6px',padding:'7px 10px'}}>
+                      💡 Mở File Explorer → <b>Downloads</b> để xem file vừa tải
+                    </div>
+                  </div>
+                )}
+
+                <div style={{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'hidden'}}>
+                  <div style={{background:'#f8fafc',padding:'7px 12px',fontWeight:700,fontSize:'12px',color:'#374151',borderBottom:'1px solid #e2e8f0'}}>
+                    📄 Danh sách file đã tạo ({exportResult.files.length})
+                  </div>
+                  <div style={{maxHeight:'160px',overflowY:'auto'}}>
+                    {exportResult.files.map((f,i)=>(
+                      <div key={i} style={{display:'flex',alignItems:'center',gap:'8px',padding:'7px 12px',borderBottom:i<exportResult.files.length-1?'1px solid #f1f5f9':'none',background:i%2===0?'#fff':'#f8fafc'}}>
+                        <span style={{fontSize:'14px'}}>📝</span>
+                        <span style={{flex:1,fontSize:'11.5px',color:'#1e293b',wordBreak:'break-all'}}>{f}</span>
+                      </div>
+                    ))}
+                    {exportResult.files.length === 0 && (
+                      <div style={{padding:'12px',fontSize:'12px',color:'#94a3b8',textAlign:'center'}}>Không có file nào được ghi nhận</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-success" onClick={()=>setExportResult(null)}>✓ Đã hiểu</button>
+              </div>
+            </div>
+          </div>
+        )}
+        </>
       );
     };
 
@@ -4401,7 +4526,9 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               newResults.push({ ok: false, name: file.name, msg: res });
             } else {
               const url = URL.createObjectURL(res.blob);
-              const a = document.createElement('a'); a.href = url; a.download = res.filename; a.click(); URL.revokeObjectURL(url);
+              const a = document.createElement('a'); a.href = url; a.download = res.filename;
+              document.body.appendChild(a); a.click();
+              setTimeout(() => { URL.revokeObjectURL(url); document.body.removeChild(a); }, 300);
               newResults.push({ ok: true, name: file.name, msg: '✅ Thay ' + res.count + ' placeholder → ' + res.filename });
             }
             processNext(idx + 1);
@@ -5883,7 +6010,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             {bbActiveTab==='extra' && (
               <div className="bb-tab-pane active">
                 <div className="form-row">
-                  <div><label className="form-label">Tạm giữ (thông tin)</label><textarea name="tamGiu" value={objectData.tamGiu||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Thông tin về đồ vật, tài liệu bị tạm giữ..." /></div>
+                  <div><label className="form-label">Tạm giữ khác</label><textarea name="tamGiu" value={objectData.tamGiu||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Đồ vật, tài liệu bị tạm giữ (thông tin khác)..." /></div>
+                  <div><label className="form-label">Tạm giữ sau khám xét</label><textarea name="tamGiuSauKhamXet" value={objectData.tamGiuSauKhamXet||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Đồ vật, tài liệu bị tạm giữ sau khám xét..." /></div>
                   <div><label className="form-label">Tiền án <span style={{fontSize:'11px',color:'#64748b'}}>(số lần, tội danh; ghi "Không" nếu không có)</span></label><textarea name="tienAn" value={objectData.tienAn||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Không" /></div>
                   <div><label className="form-label">Tiền sự <span style={{fontSize:'11px',color:'#64748b'}}>(số lần, hành vi; ghi "Không" nếu không có)</span></label><textarea name="tienSu" value={objectData.tienSu||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Không" /></div>
                   <div><label className="form-label">Thông tin đối tượng 2</label><textarea name="thongTinDt2" value={objectData.thongTinDt2||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Thông tin bổ sung..." /></div>
@@ -5897,11 +6025,15 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             <button className="btn btn-success" onClick={handleSubmitObject}>💾 Lưu đối tượng</button>
             <button className="btn btn-primary" onClick={exportResume}>📄 Xuất lý lịch</button>
             <button className="btn btn-gray" onClick={() => {
-              if (editingIndex !== null && window.confirm('Bạn có thay đổi chưa được lưu. Bạn có chắc muốn hủy và mất dữ liệu này không?')) {
-                setShowObjectForm(false);
-              } else if (editingIndex === null) {
-                setShowObjectForm(false);
+              // BUG FIX #5: Hỏi xác nhận cả khi thêm MỚI (không chỉ khi edit)
+              // để tránh mất dữ liệu khi người dùng đã nhập nhưng click Hủy nhầm.
+              const hasData = !!(objectData.name || objectData.idNumber || objectData.birthDate ||
+                objectData.permanentAddress || objectData.idNumber || objectData.loaiMaTuy ||
+                objectData.qdKtbcSo || objectData.lenhBatSo);
+              if (hasData && !window.confirm('Bạn có thay đổi chưa được lưu. Bạn có chắc muốn hủy và mất dữ liệu này không?')) {
+                return;
               }
+              setShowObjectForm(false);
             }} style={{marginLeft: 'auto'}}>✕ Hủy</button>
           </div>
           </div>
@@ -6051,6 +6183,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       
       const handleInputChange = useCallback((e) => {
         const { name, value } = e.target;
+        // C-2 FIX: Đọc caseData trực tiếp từ closure — phải có caseData trong deps
+        // để SECURE_FIELDS check không bị stale (trước đây deps=[] → luôn thấy caseData rỗng)
         if (SECURE_FIELDS[name] && caseData[name] && String(caseData[name]).trim()) {
           requestSecure(SECURE_FIELDS[name], () => setCaseData(prev => ({ ...prev, [name]: value })));
           return;
@@ -6076,7 +6210,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           
           return newCaseData;
         });
-      }, []);
+      }, [caseData]);
       
       const handleCurrentTypeChange = useCallback((e) => {
         const value = e.target.value;
@@ -6098,66 +6232,18 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       }, [currentType, caseTypesList, caseData.type]);
       
       const handleAddObjectClick = useCallback(() => {
-        console.log('handleAddObjectClick called, setting showObjectForm to true');
         setEditingIndex(null);
-        setObjectData({
-          name: '',
-          gender: '',
-          alias: 'Không',
-          birthDate: '',
-          birthPlace: '',
-          hometown: '',
-          nationality: 'Việt Nam',
-          ethnicity: 'Kinh',
-          religion: 'Không',
-          idNumber: '',
-          issueDate: '',
-          issuePlace: '',
-          education: '',
-          occupation: '',
-          workplace: '',
-          permanentAddress: '',
-          phoneNumber: '',
-          temporaryResidence: '',
-          currentResidence: '',
-          familyBackground: '',
-          relationship: '',
-          handlingMethod: '',
-          behavior: [],
-          penaltyForm: '',
-          administrativeRecordNumber: '',
-          administrativeDecisionNumber: '',
-          reportDate: '',
-          decisionDate: '',
-          prosecutionDateObj: '',
-          prosecutionDecisionObj: '',
-          detentionDecisionDate: '',
-          detentionDecisionNumber: '',
-          custodyDecisionDate: '',
-          custodyDecisionNumber: '',
-          crimeType: '',
-          custodyExtensionCount: '0',
-          detentionExtensionCount: '0',
-          custodyExpirationDate: '',
-          detentionExpirationDate: '',
-          tienAn: '',
-          tienSu: '',
-          photo: '',
-          photoLeft: '',
-          photoRight: ''
-        });
+        setObjectData({ ...EMPTY_OBJECT }); // BUG FIX: dùng EMPTY_OBJECT đảm bảo reset đủ 65 trường
         setShowObjectForm(true);
       }, []);
       
       const handleEditObject = useCallback((index) => {
-        console.log('Editing object at index:', index);
         setObjectData({ ...tempObjects[index] });
         setEditingIndex(index);
         setShowObjectForm(true);
       }, [tempObjects]);
       
       const handleDeleteConfirm = useCallback((index) => {
-        console.log('handleDeleteConfirm called with index:', index);
         if (window.confirm('Bạn có chắc chắn muốn xóa đối tượng này?')) {
           const updatedObjects = tempObjects.filter((_, i) => i !== index);
           setTempObjects(updatedObjects);
@@ -6167,8 +6253,6 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       
       const handleSubmitCase = useCallback((e) => {
         e.preventDefault();
-        console.log('Submitting case:', caseData);
-        console.log('Temp objects:', tempObjects);
         
         if (!caseData.id || !caseData.type || caseData.type.length === 0 || !caseData.dateReceived) {
           setErrorMessage('Vui lòng điền đầy đủ các trường bắt buộc: Mã số vụ, Loại vụ việc, Ngày tiếp nhận.');
@@ -6180,7 +6264,6 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           return;
         }
         
-        console.log('Updating cases...');
         let updatedCases;
         
         if (editingCaseId !== null) {
@@ -6380,10 +6463,10 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             </div>
             
             <div className="col-span-2">
-              <label className={`form-label${(tempObjects.map(obj=>obj.tamGiu).filter(Boolean).join('\n')||caseData.seizedItems) ? ' label-filled' : ''}`}>Đồ vật, tài liệu bị tạm giữ <span style={{fontSize:'11px',color:'#64748b'}}>(tự động cập nhật từ "Tạm giữ (thông tin)" của đối tượng)</span></label>
+              <label className={`form-label${(tempObjects.map(obj=>[obj.tamGiu,obj.tamGiuSauKhamXet].filter(Boolean).join(' | ')).filter(Boolean).join('\n')||caseData.seizedItems) ? ' label-filled' : ''}`}>Đồ vật, tài liệu bị tạm giữ <span style={{fontSize:'11px',color:'#64748b'}}>(tự động cập nhật từ "Tạm giữ khác" và "Tạm giữ sau khám xét" của đối tượng)</span></label>
               <textarea
                 name="seizedItems"
-                value={tempObjects.map(obj => obj.tamGiu).filter(Boolean).join('\n') || caseData.seizedItems || ''}
+                value={tempObjects.map(obj => [obj.tamGiu, obj.tamGiuSauKhamXet].filter(Boolean).join(' | ')).filter(Boolean).join('\n') || caseData.seizedItems || ''}
                 onChange={handleInputChange}
                 placeholder="Tự động cập nhật từ thông tin tạm giữ của các đối tượng"
                 className="form-control"
@@ -7017,7 +7100,15 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const [bgMode, setBgMode] = useState(() => localStorage.getItem('loginBgMode') || 'gradient');
       const [bgGradient, setBgGradient] = useState(() => localStorage.getItem('loginBgGradient') || '#0f172a,#1e3a8a,#0f172a');
       const [bgColor, setBgColor] = useState(() => localStorage.getItem('loginBgColor') || '#0f172a');
-      const [bgImage, setBgImage] = useState(() => localStorage.getItem('loginBgImage') || '');
+      const [bgImage, setBgImage] = useState(() => {
+        // L-3 FIX: Xóa ảnh nền cũ quá lớn (> 1.1MB base64 ~ 800KB file) để tránh tràn localStorage
+        const stored = localStorage.getItem('loginBgImage') || '';
+        if (stored && stored.length > 1_100_000) {
+          localStorage.removeItem('loginBgImage');
+          return '';
+        }
+        return stored;
+      });
 
       const gradientPresets = [
         { label: 'Xanh đậm (mặc định)', value: '#0f172a,#1e3a8a,#0f172a' },
@@ -7046,29 +7137,73 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const handleImageUpload = (e) => {
         const file = e.target.files[0];
         if (!file) return;
+        // BUG FIX #7: Giới hạn kích thước ảnh nền trước khi lưu vào localStorage.
+        // Ảnh JPEG 3MB → base64 ~4MB → gần hết quota localStorage (~5-10MB) →
+        // các setItem khác (repo, folder tree, settings) sẽ throw QuotaExceededError.
+        // Giới hạn 800KB file gốc (~1.1MB base64) là đủ cho ảnh nền.
+        const MAX_SIZE = 800 * 1024; // 800 KB
+        if (file.size > MAX_SIZE) {
+          alert(`Ảnh quá lớn (${(file.size/1024).toFixed(0)} KB). Vui lòng chọn ảnh nhỏ hơn 800 KB để tránh lỗi lưu trữ.`);
+          e.target.value = '';
+          return;
+        }
         const reader = new FileReader();
         reader.onload = (ev) => {
           const data = ev.target.result;
-          setBgImage(data);
-          setBgMode('image');
-          saveBg('image', bgGradient, bgColor, data);
+          try {
+            setBgImage(data);
+            setBgMode('image');
+            saveBg('image', bgGradient, bgColor, data);
+          } catch(err) {
+            alert('Không thể lưu ảnh nền: bộ nhớ trình duyệt đã đầy. Vui lòng chọn ảnh nhỏ hơn hoặc xóa bớt dữ liệu.');
+            e.target.value = '';
+          }
         };
         reader.readAsDataURL(file);
       };
 
+      // H-3 FIX: Brute force protection — track failed attempts in sessionStorage
+      const MAX_ATTEMPTS = 5;
+      const LOCKOUT_MS   = 30 * 1000; // 30 giây
+
       const handleLogin = useCallback((e) => {
         e.preventDefault();
         setLoginError('');
+
+        // Check lockout
+        const lockUntil = parseInt(sessionStorage.getItem('lockUntil') || '0', 10);
+        if (Date.now() < lockUntil) {
+          const secs = Math.ceil((lockUntil - Date.now()) / 1000);
+          setLoginError(`Tài khoản tạm khóa do đăng nhập sai nhiều lần. Thử lại sau ${secs} giây.`);
+          return;
+        }
+
         hashPassword(password).then(function(hashedPassword) {
           return getUserFromDB(username).then(function(user) {
             if (user && user.password === hashedPassword) {
+              // Đăng nhập thành công — xóa bộ đếm thất bại
+              sessionStorage.removeItem('failCount');
+              sessionStorage.removeItem('lockUntil');
               sessionStorage.setItem('loggedIn', 'true');
               sessionStorage.setItem('username', username);
+              // H-2 FIX: Nếu đây là lần đăng nhập đầu (mật khẩu mặc định), nhắc đổi ngay
+              if (user._isDefault) {
+                sessionStorage.setItem('mustChangePassword', 'true');
+              }
               setLoggedIn(true);
               writeAuditLog('LOGIN_OK', { note: 'Đăng nhập thành công' });
             } else {
-              writeAuditLog('LOGIN_FAIL', { note: 'Sai thông tin đăng nhập', attemptUser: username });
-              setLoginError('Tên đăng nhập hoặc mật khẩu không đúng.');
+              // Tăng bộ đếm thất bại
+              const fails = parseInt(sessionStorage.getItem('failCount') || '0', 10) + 1;
+              sessionStorage.setItem('failCount', fails);
+              writeAuditLog('LOGIN_FAIL', { note: `Sai thông tin đăng nhập (lần ${fails})`, attemptUser: username });
+              if (fails >= MAX_ATTEMPTS) {
+                sessionStorage.setItem('lockUntil', Date.now() + LOCKOUT_MS);
+                sessionStorage.setItem('failCount', '0');
+                setLoginError(`Sai quá ${MAX_ATTEMPTS} lần. Tài khoản bị khóa 30 giây.`);
+              } else {
+                setLoginError(`Tên đăng nhập hoặc mật khẩu không đúng. (${fails}/${MAX_ATTEMPTS})`);
+              }
               setShake(true);
               setTimeout(function(){ setShake(false); }, 500);
             }
@@ -7189,7 +7324,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             )}
 
             <p style={{marginTop: '12px', fontSize: '11px', color: '#94a3b8', textAlign: 'center'}}>
-              Tài khoản mặc định: admin / password
+              Liên hệ quản trị viên nếu quên mật khẩu
             </p>
           </div>
         </div>
@@ -7199,34 +7334,57 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
     // ==================== ChangeCredentialsForm Component ====================
     const ChangeCredentialsForm = ({ setShowChangeForm, setErrorMessage }) => {
       const [newUsername, setNewUsername] = useState('');
+      const [currentPassword, setCurrentPassword] = useState(''); // BUG FIX #3: yêu cầu mật khẩu hiện tại
       const [newPassword, setNewPassword] = useState('');
       const [confirmPassword, setConfirmPassword] = useState('');
+      const [credError, setCredError] = useState('');
       
       const handleChange = useCallback((e) => {
         e.preventDefault();
+        setCredError('');
         
+        if (!currentPassword) {
+          setCredError('Vui lòng nhập mật khẩu hiện tại để xác nhận.');
+          return;
+        }
         if (newPassword !== confirmPassword) {
-          setErrorMessage('Mật khẩu xác nhận không khớp.');
+          setCredError('Mật khẩu xác nhận không khớp.');
+          return;
+        }
+        if (newPassword.length < 4) {
+          setCredError('Mật khẩu mới phải có ít nhất 4 ký tự.');
           return;
         }
         
-        hashPassword(newPassword).then(function(hashedNewPassword) {
+        // BUG FIX #3: Xác thực mật khẩu hiện tại trước khi cho phép đổi
+        const currentUser = sessionStorage.getItem('username');
+        hashPassword(currentPassword).then(function(hashedCurrent) {
+          return getUserFromDB(currentUser).then(function(existingUser) {
+            if (!existingUser || existingUser.password !== hashedCurrent) {
+              setCredError('❌ Mật khẩu hiện tại không đúng.');
+              throw new Error('wrong_current_password');
+            }
+            return hashPassword(newPassword);
+          });
+        }).then(function(hashedNewPassword) {
           const user = { 
-            username: newUsername || sessionStorage.getItem('username'), 
+            username: newUsername.trim() || currentUser, 
             password: hashedNewPassword 
           };
           return saveUserToDB(user);
         }).then(function() {
-          writeAuditLog('PASSWORD_CHANGED', { note: `Đổi tài khoản: ${sessionStorage.getItem('username')} → ${newUsername || sessionStorage.getItem('username')}` });
-          setErrorMessage(null);
+          writeAuditLog('PASSWORD_CHANGED', { note: `Đổi tài khoản: ${currentUser} → ${newUsername.trim() || currentUser}` });
+          setCredError('');
           setShowChangeForm(false);
           sessionStorage.clear();
           window.location.reload();
         }).catch(function(error) {
-          console.error('Error changing credentials:', error);
-          setErrorMessage('Không thể thay đổi thông tin. Vui lòng thử lại.');
+          if (error.message !== 'wrong_current_password') {
+            console.error('Error changing credentials:', error);
+            setCredError('Không thể thay đổi thông tin. Vui lòng thử lại.');
+          }
         });
-      }, [newUsername, newPassword, confirmPassword]);
+      }, [newUsername, currentPassword, newPassword, confirmPassword]);
       
       return (
         <div className="modal-overlay">
@@ -7237,6 +7395,17 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             </div>
             <form onSubmit={handleChange}>
               <div className="modal-body">
+                {credError && (
+                  <div style={{background:'#fee2e2',border:'1px solid #fca5a5',borderRadius:'8px',padding:'10px 14px',marginBottom:'12px',fontSize:'13px',color:'#991b1b',display:'flex',alignItems:'center',gap:'8px'}}>
+                    {credError}
+                  </div>
+                )}
+                <div className="form-group">
+                  <label className="form-label">Mật khẩu hiện tại <span className="required-mark">*</span></label>
+                  <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)}
+                    className="form-control" placeholder="Nhập mật khẩu đang dùng" required autoFocus />
+                </div>
+                <hr style={{border:'none',borderTop:'1px solid #e2e8f0',margin:'4px 0 12px'}} />
                 <div className="form-group">
                   <label className="form-label">Tên đăng nhập mới <span style={{color: '#94a3b8', fontWeight: 400}}>(tùy chọn)</span></label>
                   <input type="text" value={newUsername} onChange={(e) => setNewUsername(e.target.value)}
@@ -7737,6 +7906,46 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
     };
 
 
+    // ==================== EMPTY_OBJECT — Single source of truth for object reset ====================
+    // BUG FIX: Trước đây có 3 nơi reset objectData với danh sách trường khác nhau,
+    // dẫn đến ~35 trường không được reset (dữ liệu đối tượng cũ "rò rỉ" sang đối tượng mới).
+    // Giờ chỉ cần dùng { ...EMPTY_OBJECT } ở mọi nơi — đảm bảo đồng nhất.
+    const EMPTY_OBJECT = {
+      name: '', gender: '', alias: 'Không', birthDate: '', birthPlace: '',
+      hometown: '', nationality: 'Việt Nam', ethnicity: 'Kinh', religion: 'Không',
+      idNumber: '', issueDate: '', issuePlace: '', education: '', occupation: '',
+      workplace: '', permanentAddress: '', phoneNumber: '', temporaryResidence: '',
+      currentResidence: '', familyBackground: '', relationship: '', invitationDate: '',
+      handlingMethod: '', behavior: [], penaltyForm: '',
+      administrativeRecordNumber: '', administrativeDecisionNumber: '',
+      reportDate: '', decisionDate: '', prosecutionDateObj: '', prosecutionDecisionObj: '',
+      custodyDecisionDate: '', custodyDecisionNumber: '', custodyExtensionCount: '0',
+      custodyExpirationDate: '', detentionDecisionDate: '', detentionDecisionNumber: '',
+      detentionExtensionCount: '0', detentionExpirationDate: '', crimeType: '',
+      photo: '', photoLeft: '', photoRight: '',
+      lyLichGon: '', tienAn: '', tienSu: '', nhanThan: '', loiKhai: '',
+      tamGiu: '', tamGiuSauKhamXet: '', thongTinDt2: '', ghiChuBB: '',
+      chaTen: '', chaSinhNam: '', chaNgheNghiep: '', chaNoiO: '',
+      meTen: '', meSinhNam: '', meNgheNghiep: '', meNoiO: '',
+      loaiMaTuy: '', hinhThucSuDung: '', noiSuDung: '',
+      ngayXetNghiem: '', ngayXacDinhNghien: '', ngayLapHoSo: '',
+      thoiDiemSuDungDau: '', noiCaiNghien: '',
+      qdQuanLySo: '', qdQuanLyNgay: '',
+      qdChamDutSo: '', qdChamDutNgay: '',
+      qdDungSo: '', qdDungNgay: '',
+      qdQuanLyNghienSo: '', qdQuanLyNghienNgay: '',
+      qdXphcSo: '', qdXphcNgay: '',
+      deNghiXacNhanSo: '', deNghiXacNhanNgay: '',
+      lenhKhamXetSo: '', lenhKhamXetNgay: '',
+      qdTrungCauLoai: '', qdTrungCauSo: '', qdTrungCauNgay: '', qdTrungCauBbgn: '',
+      qdKtvaSo: '', qdKtvaNgay: '',
+      qdKtbcSo: '', qdKtbcNgay: '',
+      lenhBatSo: '', lenhBatNgay: '',
+      lenhTamGiuSo: '', lenhTamGiuNgay: '',
+      lenhTamGiamSo: '', lenhTamGiamNgay: '',
+      ngayChuyen: '', noiChuyen: ''
+    };
+
         // ==================== Main App Component ====================
     const App = () => {
       // State management
@@ -7879,78 +8088,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         phanLoaiTin: ''
       });
       
-      const [objectData, setObjectData] = useState({
-        name: '',
-        gender: '',
-        alias: 'Không',
-        birthDate: '',
-        birthPlace: '',
-        hometown: '',
-        nationality: 'Việt Nam',
-        ethnicity: 'Kinh',
-        religion: 'Không',
-        idNumber: '',
-        issueDate: '',
-        issuePlace: '',
-        education: '',
-        occupation: '',
-        workplace: '',
-        permanentAddress: '',
-        phoneNumber: '',
-        temporaryResidence: '',
-        currentResidence: '',
-        familyBackground: '',
-        relationship: '',
-        invitationDate: '',
-        handlingMethod: '',
-        behavior: [],
-        penaltyForm: '',
-        administrativeRecordNumber: '',
-        administrativeDecisionNumber: '',
-        reportDate: '',
-        decisionDate: '',
-        prosecutionDateObj: '',
-        prosecutionDecisionObj: '',
-        custodyDecisionDate: '',
-        custodyDecisionNumber: '',
-        custodyExtensionCount: '0',
-        custodyExpirationDate: '',
-        detentionDecisionDate: '',
-        detentionDecisionNumber: '',
-        detentionExtensionCount: '0',
-        detentionExpirationDate: '',
-        crimeType: '',
-        photo: '',
-        photoLeft: '',
-        photoRight: '',
-        lyLichGon: '',
-        tienAn: '',
-        tienSu: '',
-        nhanThan: '',
-        loiKhai: '',
-        tamGiu: '',
-        thongTinDt2: '',
-        ghiChuBB: '',
-        chaTen: '', chaSinhNam: '', chaNgheNghiep: '', chaNoiO: '',
-        meTen: '', meSinhNam: '', meNgheNghiep: '', meNoiO: '',
-        loaiMaTuy: '', hinhThucSuDung: '', noiSuDung: '',
-        ngayXetNghiem: '', ngayXacDinhNghien: '', ngayLapHoSo: '', thoiDiemSuDungDau: '',
-        noiCaiNghien: '',
-        qdQuanLySo: '', qdQuanLyNgay: '',
-        qdChamDutSo: '', qdChamDutNgay: '',
-        qdDungSo: '', qdDungNgay: '',
-        qdQuanLyNghienSo: '', qdQuanLyNghienNgay: '',
-        qdXphcSo: '', qdXphcNgay: '',
-        deNghiXacNhanSo: '', deNghiXacNhanNgay: '',
-        lenhKhamXetSo: '', lenhKhamXetNgay: '',
-        qdTrungCauLoai: '', qdTrungCauSo: '', qdTrungCauNgay: '', qdTrungCauBbgn: '',
-        qdKtvaSo: '', qdKtvaNgay: '',
-        qdKtbcSo: '', qdKtbcNgay: '',
-        lenhBatSo: '', lenhBatNgay: '',
-        lenhTamGiuSo: '', lenhTamGiuNgay: '',
-        lenhTamGiamSo: '', lenhTamGiamNgay: '',
-        ngayChuyen: '', noiChuyen: ''
-      });
+      const [objectData, setObjectData] = useState({ ...EMPTY_OBJECT }); // BUG FIX: dùng EMPTY_OBJECT đảm bảo đủ 65 trường
       
       // Authentication state
       const [loggedIn, setLoggedIn] = useState(!!sessionStorage.getItem('loggedIn'));
@@ -7962,6 +8100,13 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const [username, setUsername] = useState('');
       const [password, setPassword] = useState('');
       const [showChangeForm, setShowChangeForm] = useState(false);
+      // H-2 FIX: Tự mở form đổi mật khẩu nếu đang dùng mật khẩu mặc định
+      React.useEffect(() => {
+        if (loggedIn && sessionStorage.getItem('mustChangePassword') === 'true') {
+          sessionStorage.removeItem('mustChangePassword');
+          setTimeout(() => setShowChangeForm(true), 800);
+        }
+      }, [loggedIn]);
       const [showUnitSettings, setShowUnitSettings] = useState(false);
       const [showWordExport, setShowWordExport] = useState(false);
       const [showPlaceholderTool, setShowPlaceholderTool] = useState(false);
@@ -7973,7 +8118,10 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const filterEndDateRef = useRef(null);
       
       // Idle timer
-      let idleTimer = useRef(null);
+      const idleTimer = useRef(null); // L-2 FIX: ref không cần let — không bao giờ reassign
+      // BUG FIX #4: Track which cases/objects already triggered audio this session
+      // to prevent warning sound firing on every state change while cases is in dep array.
+      const warnedCasesRef = useRef(new Set());
       
       const resetIdleTimer = useCallback(() => {
         if (idleTimer.current) {
@@ -8040,10 +8188,11 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           }
 
           // Ensure admin user exists
+          // H-2 FIX: Đánh dấu _isDefault=true để hiện nhắc đổi mật khẩu sau lần đăng nhập đầu tiên
           const localAdmin = await _idbGetUser('admin').catch(() => null);
           if (!localAdmin) {
             const hp = await hashPassword('password').catch(() => null);
-            if (hp) await saveUserToDB({ username: 'admin', password: hp }).catch(() => {});
+            if (hp) await saveUserToDB({ username: 'admin', password: hp, _isDefault: true }).catch(() => {});
           }
 
           // ── Phase 2: Firestore background sync ────────────────────────
@@ -8145,8 +8294,10 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       }, [hasUnsavedChanges, showForm, showObjectForm]);
       
       // Auto-save draft to sessionStorage
+      // M-2 FIX: Lưu draft dù chưa có ID — vụ mới thường điền ID sau cùng,
+      // nếu chỉ lưu khi có ID thì refresh mất toàn bộ dữ liệu đã nhập.
       useEffect(() => {
-        if (showForm && caseData.id) {
+        if (showForm) {
           sessionStorage.setItem('draft_case', JSON.stringify(caseData));
           setHasUnsavedChanges(true);
         }
@@ -8168,16 +8319,24 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       }, [showForm, showObjectForm]);
       
       // Warning system for expiring dates
+      // BUG FIX #4: Dùng warnedCasesRef để chỉ phát âm thanh 1 lần mỗi phiên cho mỗi vụ/đối tượng,
+      // tránh kêu liên tục mỗi lần cases thay đổi (vd: edit form, thêm đối tượng...).
       useEffect(() => {
         const today = new Date();
         const warnings = [];
+        let needCriticalSound = false;
+        let needWarningSound = false;
         
         cases.forEach(c => {
           // Check tin báo expiration
           if (c.investigationResult === 'tin báo' && c.status !== 'hoàn thành' && c.expirationDate) {
             const exp = new Date(c.expirationDate);
             const days = Math.floor((exp - today) / 86400000);
-            if (days > 0 && days <= 10) warnings.push(c.id + ' (tin báo)');
+            if (days > 0 && days <= 10) {
+              warnings.push(c.id + ' (tin báo)');
+              const key = c.id + '_tinbao';
+              if (!warnedCasesRef.current.has(key)) { warnedCasesRef.current.add(key); needWarningSound = true; }
+            }
           }
           
           // Check investigation expiration
@@ -8186,12 +8345,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             const days = Math.floor((exp - today) / 86400000);
             if (days > 0 && days <= 10) {
               warnings.push(c.id + ' (điều tra)');
-              // Play sound notification
-              try {
-                AudioManager.warningSound();
-              } catch (e) {
-                console.log('Audio notification failed:', e);
-              }
+              const key = c.id + '_dieutra';
+              if (!warnedCasesRef.current.has(key)) { warnedCasesRef.current.add(key); needWarningSound = true; }
             }
           }
           
@@ -8202,7 +8357,11 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 if (obj.custodyExpirationDate) {
                   const exp = new Date(obj.custodyExpirationDate);
                   const days = Math.floor((exp - today) / 86400000);
-                  if (days > 0 && days <= 2) warnings.push(c.id + ' - ' + obj.name + ' (tạm giữ)');
+                  if (days > 0 && days <= 2) {
+                    warnings.push(c.id + ' - ' + obj.name + ' (tạm giữ)');
+                    const key = c.id + '_' + (obj.name||'') + '_tamgiu';
+                    if (!warnedCasesRef.current.has(key)) { warnedCasesRef.current.add(key); needCriticalSound = true; }
+                  }
                 }
                 
                 if (obj.detentionExpirationDate) {
@@ -8210,17 +8369,21 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   const days = Math.floor((exp - today) / 86400000);
                   if (days > 0 && days <= 10) {
                     warnings.push(c.id + ' - ' + obj.name + ' (tạm giam)');
-                    try {
-                      AudioManager.warningSound();
-                    } catch (e) {
-                      console.log('Audio notification failed:', e);
-                    }
+                    const key = c.id + '_' + (obj.name||'') + '_tamgiam';
+                    if (!warnedCasesRef.current.has(key)) { warnedCasesRef.current.add(key); needWarningSound = true; }
                   }
                 }
               }
             });
           }
         });
+        
+        // Phát âm thanh 1 lần cho toàn bộ batch cảnh báo mới (không lặp lại)
+        if (needCriticalSound) {
+          try { AudioManager.criticalSound(); } catch(e) {}
+        } else if (needWarningSound) {
+          try { AudioManager.warningSound(); } catch(e) {}
+        }
         
         if (warnings.length > 0) {
           setErrorMessage(`Cảnh báo: Vụ việc ${warnings.join(', ')} sắp hết hạn (dưới 10 ngày). Yêu cầu kết luận điều tra hoặc gia hạn.`);
@@ -8265,6 +8428,10 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       // Reset page when filters change
       useEffect(() => {
         setCurrentPage(1);
+        // M-5 FIX: Reset scroll khi chuyển view để tránh người dùng thấy giữa trang
+        const mainContent = document.querySelector('.main-content');
+        if (mainContent) mainContent.scrollTop = 0;
+        else window.scrollTo(0, 0);
       }, [viewMode, statusFilter, searchQuery]);
       
       // Initialize flatpickr for report dates
@@ -8366,12 +8533,17 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       }, [cases, exportFilter, filterCaseId, filterStartDate, filterEndDate]);
       
       const handleSubmitObject = useCallback((e) => {
-        console.log('Submitting object:', objectData);
         
         // Validation
-        if (objectData.phoneNumber && !/^\+?\d{9,12}$/.test(objectData.phoneNumber)) {
-          setErrorMessage('Số điện thoại không hợp lệ.');
-          return;
+        // M-3 FIX: SĐT Việt Nam luôn 10 chữ số (09xx, 03xx, 07xx, 08xx...)
+        // hoặc dạng quốc tế +84xxxxxxxxx (11 ký tự). Regex cũ cho phép 9 chữ số (sai).
+        if (objectData.phoneNumber) {
+          const ph = objectData.phoneNumber.trim();
+          const vnPhone = /^(0[3-9]\d{8}|\+84[3-9]\d{8})$/.test(ph);
+          if (!vnPhone) {
+            setErrorMessage('Số điện thoại không hợp lệ (phải là 10 số, bắt đầu 03x-09x, hoặc +84...).');
+            return;
+          }
         }
         
         if (objectData.birthDate) {
@@ -8413,61 +8585,14 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           addToast('Thông tin đối tượng đã được cập nhật! (Nhớ lưu vụ việc để lưu vĩnh viễn)', 'success');
         }
         
-        // Reset form
-        setObjectData({
-          name: '',
-          gender: '',
-          alias: 'Không',
-          birthDate: '',
-          birthPlace: '',
-          hometown: '',
-          nationality: 'Việt Nam',
-          ethnicity: 'Kinh',
-          religion: 'Không',
-          idNumber: '',
-          issueDate: '',
-          issuePlace: '',
-          education: '',
-          occupation: '',
-          workplace: '',
-          permanentAddress: '',
-          phoneNumber: '',
-          temporaryResidence: '',
-          currentResidence: '',
-          familyBackground: '',
-          relationship: '',
-          handlingMethod: '',
-          behavior: [],
-          penaltyForm: '',
-          administrativeRecordNumber: '',
-          administrativeDecisionNumber: '',
-          reportDate: '',
-          decisionDate: '',
-          prosecutionDateObj: '',
-          prosecutionDecisionObj: '',
-          custodyDecisionDate: '',
-          custodyDecisionNumber: '',
-          custodyExtensionCount: '0',
-          custodyExpirationDate: '',
-          detentionDecisionDate: '',
-          detentionDecisionNumber: '',
-          detentionExtensionCount: '0',
-          detentionExpirationDate: '',
-          crimeType: '',
-          tienAn: '',
-          tienSu: '',
-          photo: '',
-          photoLeft: '',
-          photoRight: '',
-          invitationDate: ''
-        });
+        // Reset form — BUG FIX: dùng EMPTY_OBJECT đảm bảo reset đủ 65 trường
+        setObjectData({ ...EMPTY_OBJECT });
         
         setShowObjectForm(false);
         setHasUnsavedChanges(false);
       }, [objectData, editingIndex, editingCaseId, tempObjects, cases]);
       
       const handleDeleteCase = useCallback(() => {
-        console.log('Deleting case with id:', deleteCaseId);
         const deletedCase = cases.find(c => c.id === deleteCaseId);
         writeAuditLog('DELETE_CASE', { caseId: deleteCaseId });
         setUndoData({ type: 'case', data: deletedCase });
@@ -8483,22 +8608,25 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const handleUndoDeleteCase = useCallback(() => {
         if (undoData && undoData.type === 'case') {
           const restoredCase = undoData.data;
-          setCases(prev => [...prev, restoredCase]);
-          // Lưu lại vụ việc vào DB sau khi hoàn tác
-          saveCasesToDB([restoredCase]).catch(e => console.warn('Undo restore failed:', e));
+          // BUG FIX: phải lưu TOÀN BỘ danh sách (bao gồm vụ vừa restore),
+          // không phải chỉ [restoredCase] — vì _idbSaveCases() clear() rồi mới insert,
+          // nếu chỉ truyền 1 vụ sẽ xóa sạch tất cả vụ còn lại trong DB.
+          setCases(prev => {
+            const restoredAll = [...prev, restoredCase];
+            saveCasesToDB(restoredAll).catch(e => console.warn('Undo restore failed:', e));
+            return restoredAll;
+          });
           setUndoData(null);
           addToast('Đã hoàn tác xóa vụ việc!', 'success');
         }
       }, [undoData]);
       
       const handleDeleteCaseConfirm = useCallback((id) => {
-        console.log('Confirming delete case with id:', id);
         setDeleteCaseId(id);
         setShowConfirm(true);
       }, []);
       
       const handleEditCase = useCallback((c) => {
-        console.log('Editing case:', c);
         setCaseData({ ...c, type: Array.isArray(c.type) ? c.type : [] });
         setTempObjects(c.objects || []);
         setShowForm(true);
@@ -9060,10 +9188,12 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         const para = (text, opts={}) => new Paragraph({ children: [TNR(text, opts)], spacing:{before:100,after:100} });
 
         const totalObjects = filteredCases.reduce((s,c)=>s+(c.objects?c.objects.length:0),0);
+        // M-1 FIX: Không so sánh filtered với ALL (luôn âm, vô nghĩa).
+        // Tính tỉ lệ phần trăm so với tổng số vụ để hiển thị trong báo cáo.
         const totalCasesAll = cases.length;
         const totalObjectsAll = cases.reduce((s,c)=>s+(c.objects?c.objects.length:0),0);
-        const diffCases = filteredCases.length - totalCasesAll;
-        const diffObjects = totalObjects - totalObjectsAll;
+        const pctCases   = totalCasesAll > 0 ? Math.round(filteredCases.length / totalCasesAll * 100) : 0;
+        const pctObjects = totalObjectsAll > 0 ? Math.round(totalObjects / totalObjectsAll * 100) : 0;
 
         try {
           // ========= PART 1: VỤ VIỆC =========
@@ -9254,7 +9384,6 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       
       // Filtered cases with memoization
       const filteredCases = useMemo(() => {
-        console.log('Filtering cases:', cases, 'searchQuery:', searchQuery, 'statusFilter:', statusFilter);
         const lowerSearchQuery = searchQuery.toLowerCase();
         
         return cases.filter(c => {
@@ -9271,9 +9400,15 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         });
       }, [cases, searchQuery, statusFilter]);
       
+      const completedCases = useMemo(() => cases.filter(c => c.status === 'hoàn thành'), [cases]);
       const totalPages = Math.ceil(filteredCases.length / itemsPerPage);
       const paginatedCases = filteredCases.slice(
         (currentPage - 1) * itemsPerPage, 
+        currentPage * itemsPerPage
+      );
+      const completedTotalPages = Math.ceil(completedCases.length / itemsPerPage);
+      const paginatedCompletedCases = completedCases.slice(
+        (currentPage - 1) * itemsPerPage,
         currentPage * itemsPerPage
       );
       
@@ -9695,7 +9830,6 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                       <button
                         className="btn btn-primary"
                         onClick={() => {
-                          console.log('Adding new case');
                           setShowForm(true);
                           setShowObjectForm(false);
                           setTempObjects([]);
@@ -9838,7 +9972,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                           </tr>
                         </thead>
                         <tbody>
-                          {paginatedCases.filter(c => c.status === 'hoàn thành').map((c, index) => (
+                          {paginatedCompletedCases.map((c, index) => (
                             <tr key={c.id}>
                               <td className="fixed-width-stt" style={{fontWeight:600}}>{(currentPage - 1) * itemsPerPage + index + 1}</td>
                               <td className="fixed-width-id" style={{fontWeight:700,color:'#15803d',whiteSpace:'nowrap'}} title={c.id}>{c.id}</td>
@@ -9860,8 +9994,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                     </div></div>
                     <div className="pagination">
                       <button className="btn btn-gray btn-sm" disabled={currentPage === 1} onClick={() => setCurrentPage(currentPage - 1)}>← Trước</button>
-                      <span className="pagination-info">Trang <strong>{currentPage}</strong> / <strong>{totalPages}</strong></span>
-                      <button className="btn btn-gray btn-sm" disabled={currentPage === totalPages} onClick={() => setCurrentPage(currentPage + 1)}>Sau →</button>
+                      <span className="pagination-info">Trang <strong>{currentPage}</strong> / <strong>{completedTotalPages}</strong> ({completedCases.length} vụ việc)</span>
+                      <button className="btn btn-gray btn-sm" disabled={currentPage === completedTotalPages} onClick={() => setCurrentPage(currentPage + 1)}>Sau →</button>
                     </div>
                   </>
                 )}
@@ -9955,7 +10089,6 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
     // Render the app
     try {
       ReactDOM.render(<App />, document.getElementById('root'));
-      console.log('ReactDOM.render executed successfully');
     } catch (error) {
       console.error('Error rendering React app:', error);
       document.getElementById('root').innerHTML = '<h1>Lỗi: Không thể hiển thị ứng dụng. Vui lòng kiểm tra Console.</h1>';
