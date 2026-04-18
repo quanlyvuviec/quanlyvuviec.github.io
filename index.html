@@ -939,8 +939,23 @@
       try {
         if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
         firestoreDB = firebase.firestore();
-        // Khởi tạo Firebase Auth (cần cho Security Rules: request.auth != null)
-        if (firebase.auth) firebase.auth();
+        // [FIX-AUTH] Khởi tạo Firebase Auth với LOCAL persistence
+        // — session tồn tại qua các lần đóng/mở trình duyệt, tránh mất auth khi reload
+        // — signInAnonymously ngay khi init (không chờ user login) để Firestore Security Rules pass
+        // — Điều này giải quyết: mỗi thiết bị dùng IndexedDB riêng khi Firestore bị chặn do thiếu auth
+        if (firebase.auth) {
+          firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+            .catch(function(err) { console.warn('[Firebase Auth] setPersistence failed:', err.message); });
+          firebase.auth().onAuthStateChanged(function(user) {
+            if (!user) {
+              firebase.auth().signInAnonymously()
+                .then(function() { /* Firebase Auth: đã đăng nhập ẩn danh thành công */ })
+                .catch(function(err) { console.warn('[Firebase Auth] signInAnonymously failed:', err.message); });
+            } else {
+              if (syncStatusCallback) syncStatusCallback('online');
+            }
+          });
+        }
         // Cấu hình cache không giới hạn trước khi bật persistence
         firestoreDB.settings({ cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED });
         // Bật offline persistence — enablePersistence() vẫn cần dùng với Firebase v8 compat
@@ -8127,13 +8142,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 sessionStorage.setItem('mustChangePassword', 'true');
               }
               setLoggedIn(true);
-              // [AUTH-FIX] Đăng nhập Firebase Auth ẩn danh để thỏa Security Rules
-              // "allow read, write: if request.auth != null"
-              if (isFirebaseConfigured() && typeof firebase !== 'undefined' && firebase.auth) {
-                firebase.auth().signInAnonymously()
-                  .then(() => { /* Firebase Auth: đã đăng nhập ẩn danh */ })
-                  .catch(err => { console.warn('[Firebase Auth] signInAnonymously thất bại:', err.message); });
-              }
+              // [AUTH-FIX] Firebase Auth đã được xử lý tự động trong initFirebase() bằng
+              // onAuthStateChanged + signInAnonymously — không cần gọi lại ở đây
               writeAuditLog('LOGIN_OK', { note: 'Đăng nhập thành công' });
             } else {
               // Tăng bộ đếm thất bại
@@ -9315,7 +9325,91 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         }, 800);
         debouncedSave();
       }, [cases]);
-      
+
+      // ── [FIX-SYNC] REAL-TIME LISTENER: tự động đồng bộ khi thiết bị khác thay đổi dữ liệu ──
+      // Dùng onSnapshot thay vì .get() một lần → không cần refresh trang thủ công
+      useEffect(() => {
+        if (!firestoreDB) return;
+        let unsubscribe = null;
+        let isFirstSnapshot = true; // bỏ qua snapshot đầu tiên (initApp đã load rồi)
+
+        function setupListener() {
+          try {
+            unsubscribe = firestoreDB.collection('cases')
+              .orderBy('dateReceived', 'desc')
+              .onSnapshot(
+                { includeMetadataChanges: false },
+                async function(snapshot) {
+                  // Bỏ qua snapshot đầu tiên khi mount — initApp đã load dữ liệu rồi
+                  if (isFirstSnapshot) { isFirstSnapshot = false; return; }
+                  // Chỉ xử lý thay đổi từ server, bỏ qua local cache
+                  if (snapshot.metadata.fromCache) return;
+                  if (snapshot.empty) return;
+
+                  try {
+                    const cloudCases = snapshot.docs.map(function(d) {
+                      var _a = d.data(), _updatedAt = _a._updatedAt, data = Object.assign({}, _a);
+                      delete data._updatedAt;
+                      return data;
+                    });
+                    if (cloudCases.length === 0) return; // tránh xóa trắng khi offline
+
+                    // Lấy ảnh local để không mất ảnh khi merge
+                    const localCases = await _idbLoadCases().catch(function() { return []; });
+                    const localPhotoMap = _buildLocalPhotoMap(localCases);
+
+                    // Lấy cloud photos
+                    const cloudPhotoSnap = await firestoreDB.collection('photos').get().catch(function() { return null; });
+                    const cloudPhotoMap = {};
+                    if (cloudPhotoSnap) {
+                      cloudPhotoSnap.docs.forEach(function(d) {
+                        const data = d.data();
+                        cloudPhotoMap[data.caseId + '_' + data.objIndex] = {
+                          photo: data.photo || '',
+                          photoLeft: data.photoLeft || '',
+                          photoRight: data.photoRight || '',
+                          _savedAt: data._savedAt || '',
+                        };
+                      });
+                    }
+
+                    const merged = validateCases(_injectPhotos(cloudCases, cloudPhotoMap, localPhotoMap));
+                    setCases(merged);
+                    await _idbSaveCases(merged).catch(function() {});
+                    if (syncStatusCallback) syncStatusCallback('synced');
+                  } catch (e) {
+                    console.warn('[Realtime] Lỗi xử lý snapshot:', e.message);
+                  }
+                },
+                function(err) {
+                  console.warn('[Realtime] onSnapshot lỗi:', err.message);
+                  if (syncStatusCallback) syncStatusCallback('error');
+                  // Thử kết nối lại sau 15 giây
+                  setTimeout(setupListener, 15000);
+                }
+              );
+          } catch (e) {
+            console.warn('[Realtime] Không thể thiết lập listener:', e.message);
+          }
+        }
+
+        // Chờ Firebase Auth sẵn sàng rồi mới bắt đầu lắng nghe
+        if (typeof firebase !== 'undefined' && firebase.auth) {
+          const unsubAuth = firebase.auth().onAuthStateChanged(function(user) {
+            if (user && !unsubscribe) {
+              setupListener();
+            }
+          });
+          return function() {
+            unsubAuth();
+            if (unsubscribe) unsubscribe();
+          };
+        } else {
+          setupListener();
+          return function() { if (unsubscribe) unsubscribe(); };
+        }
+      }, []); // chỉ chạy 1 lần khi mount — listener tự duy trì
+
       // beforeunload warning for unsaved changes
       useEffect(() => {
         const handler = (e) => {
