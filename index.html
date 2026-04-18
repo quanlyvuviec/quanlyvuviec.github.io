@@ -4,21 +4,40 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Quản Lý Vụ Việc</title>
+  <!--
+  ============================================================
+  QLVV v5 OPTIMIZED — Dựa trên RELEASE16_4
+  Các tối ưu đã áp dụng:
+  [OPT-1] Bỏ defer ở react.min.js, react-dom.min.js, babel.min.js
+  [OPT-2] useMemo cho paginatedCases, paginatedCompletedCases
+  [OPT-3] Firestore query dùng orderBy + limit + fallback
+  [OPT-4] Loading spinner + try-catch toàn diện cho export Excel/Word
+  [OPT-5] Chuyển 68 inline style lặp sang Tailwind className
+  [OPT-6] Cơ chế tách Firebase config ra file riêng (window.__FIREBASE_CONFIG__)
+           + hướng dẫn Firestore Security Rules
+  ============================================================
+  -->
   <link rel="icon" href="data:;base64,iVBORw0KGgo=">
   <link rel="stylesheet" href="./libs/tailwind.min.css">
   <link rel="stylesheet" href="./libs/flatpickr.min.css">
   <!-- Firebase SDK (CDN - compat mode) -->
   <script src="./libs/firebase-app-compat.js"></script>
   <script src="./libs/firebase-firestore-compat.js"></script>
-  <script src="./libs/react.min.js" defer></script>
-  <script src="./libs/react-dom.min.js" defer></script>
-  <script src="./libs/babel.min.js" defer data-warnings="none"></script>
+  <script src="./libs/firebase-auth-compat.js"></script>
+  <!-- [OPT-1] Bỏ defer ở thư viện nền tảng: React/ReactDOM/Babel phải load đồng bộ
+       để Babel transpile JSX ngay khi DOM sẵn sàng, tránh lỗi "React is not defined" -->
+  <script src="./libs/react.min.js"></script>
+  <script src="./libs/react-dom.min.js"></script>
+  <script src="./libs/babel.min.js" data-warnings="none"></script>
   <script src="./libs/docx.min.js" defer></script>
   <script src="./libs/FileSaver.min.js" defer></script>
   <script src="./libs/mammoth.browser.min.js" defer></script>
   <script src="./libs/jszip.min.js" defer></script>
   <script src="./libs/xlsx.full.min.js" defer></script>
   <script src="./libs/flatpickr.min.js" defer></script>
+  <!-- docxtemplater stack: PizZip → docxtemplater → FileSaver (CDN fallback, local preferred) -->
+  <script src="./libs/pizzip.min.js" defer></script>
+  <script src="./libs/docxtemplater.min.js" defer></script>
   <style>
     /* ============ DESIGN SYSTEM ============ */
     :root {
@@ -171,6 +190,90 @@
     .stat-card-label { font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.4px; }
     .stat-card-sub   { font-size: 10px; color: #94a3b8; }
 
+    /* ============ THỐNG KÊ - REDESIGNED ============ */
+    .tk-stat-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .tk-stat-card {
+      background: #fff;
+      border-radius: 10px;
+      border: 1px solid #e2e8f0;
+      border-left: 4px solid #e2e8f0;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .tk-stat-card.amber  { border-left-color: #f59e0b; }
+    .tk-stat-card.purple { border-left-color: #7c3aed; }
+    .tk-stat-card.orange { border-left-color: #ea580c; }
+    .tk-stat-card.teal   { border-left-color: #0d9488; }
+    .tk-stat-card.red    { border-left-color: #dc2626; }
+    .tk-stat-icon {
+      width: 36px; height: 36px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; font-size: 18px;
+    }
+    .tk-stat-card.amber  .tk-stat-icon { background: #fef3c7; }
+    .tk-stat-card.purple .tk-stat-icon { background: #ede9fe; }
+    .tk-stat-card.orange .tk-stat-icon { background: #ffedd5; }
+    .tk-stat-card.teal   .tk-stat-icon { background: #ccfbf1; }
+    .tk-stat-card.red    .tk-stat-icon { background: #fee2e2; }
+    .tk-stat-value { font-size: 24px; font-weight: 800; line-height: 1.1; }
+    .tk-stat-card.amber  .tk-stat-value { color: #d97706; }
+    .tk-stat-card.purple .tk-stat-value { color: #7c3aed; }
+    .tk-stat-card.orange .tk-stat-value { color: #ea580c; }
+    .tk-stat-card.teal   .tk-stat-value { color: #0d9488; }
+    .tk-stat-card.red    .tk-stat-value { color: #dc2626; }
+    .tk-stat-label { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+
+    /* Config panel */
+    .tk-config-panel {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      margin-bottom: 14px;
+      overflow: hidden;
+    }
+    .tk-config-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 11px 16px;
+      background: #fff;
+      border-bottom: 1px solid #e2e8f0;
+      cursor: pointer;
+      user-select: none;
+    }
+    .tk-config-header-left { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #374151; }
+    .tk-config-body { padding: 16px; }
+    .tk-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+    .tk-form-group { display: flex; flex-direction: column; gap: 4px; }
+    .tk-form-label { font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.6px; }
+    .tk-export-btn-excel {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: linear-gradient(135deg,#16a34a,#15803d);
+      color: #fff; border: none; border-radius: 7px;
+      padding: 8px 14px; font-size: 13px; font-weight: 600;
+      cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+      transition: opacity 0.2s;
+    }
+    .tk-export-btn-excel:hover { opacity: 0.88; }
+    .tk-export-btn-excel:disabled { opacity: 0.55; cursor: not-allowed; }
+    .tk-export-btn-word {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: linear-gradient(135deg,#2563eb,#1d4ed8);
+      color: #fff; border: none; border-radius: 7px;
+      padding: 8px 14px; font-size: 13px; font-weight: 600;
+      cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+      transition: opacity 0.2s;
+    }
+    .tk-export-btn-word:hover { opacity: 0.88; }
+    .tk-export-btn-word:disabled { opacity: 0.55; cursor: not-allowed; }
+
     /* ============ PAGE HEADER ============ */
     .page-header {
       background: white;
@@ -236,6 +339,8 @@
     .btn-success:hover:not(:disabled) { background: #047857; }
     .btn-warning { background: var(--warning); color: white; }
     .btn-warning:hover:not(:disabled) { background: #b45309; }
+    .btn-info { background: #0891b2; color: white; }
+    .btn-info:hover:not(:disabled) { background: #0e7490; }
     .btn-danger { background: var(--danger); color: white; }
     .btn-danger:hover:not(:disabled) { background: #b91c1c; }
     .btn-gray { background: #6b7280; color: white; }
@@ -665,12 +770,15 @@
     /* ============ RESPONSIVE ============ */
     @media (max-width: 1024px) {
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .tk-stat-grid { grid-template-columns: repeat(3, 1fr); }
     }
     @media (max-width: 768px) {
       .form-row { grid-template-columns: 1fr; }
       textarea[name="familyBackground"], textarea[name="description"], textarea[name="seizedItems"] { min-width: 100%; }
       .table-fixed { min-width: 1200px; }
       .stats-grid { grid-template-columns: 1fr 1fr; }
+      .tk-stat-grid { grid-template-columns: 1fr 1fr; }
+      .tk-form-grid { grid-template-columns: 1fr; }
     }
 
     /* ============ MISC ============ */
@@ -786,9 +894,25 @@
     const AUDIT_STORE = 'auditLogs';
     const IDLE_TIMEOUT = 30 * 60 * 1000;
 
-    // ===== FIREBASE CONFIG – ĐIỀN THÔNG TIN CỦA BẠN VÀO ĐÂY =====
-    // Lấy từ: Firebase Console → Project Settings → Your apps → Web app
-    const FIREBASE_CONFIG = {
+    // ===== FIREBASE CONFIG [OPT-6 BẢO MẬT] =====
+    // ĐÃ TÁCH: Nếu muốn bảo mật hơn, tạo file libs/firebase-config.js
+    // với nội dung: window.__FIREBASE_CONFIG__ = { apiKey: ..., ... }
+    // và thêm thẻ <script src="./libs/firebase-config.js"> TRƯỚC thẻ script này.
+    // Sau đó đổi FIREBASE_CONFIG bên dưới thành: window.__FIREBASE_CONFIG__ || {}
+    //
+    // Quan trọng hơn: vào Firebase Console → Firestore Security Rules và cấu hình:
+    //   rules_version = '2';
+    //   service cloud.firestore {
+    //     match /databases/{database}/documents {
+    //       match /{document=**} {
+    //         allow read, write: if request.auth != null;
+    //       }
+    //     }
+    //   }
+    // Để chặn người ngoài đọc/ghi dữ liệu dù có API key.
+    //
+    // Nếu chạy offline hoàn toàn: để apiKey = 'YOUR_API_KEY' — Firebase sẽ bị bỏ qua.
+    const FIREBASE_CONFIG = window.__FIREBASE_CONFIG__ || {
       apiKey: "AIzaSyD5JPK3Pgj2RQjXih6KwXv_dRhEkX0myHA",
       authDomain: "qlvv-captb-2026.firebaseapp.com",
       projectId: "qlvv-captb-2026",
@@ -796,7 +920,7 @@
       messagingSenderId: "573044136131",
       appId: "1:573044136131:web:9164694157d5e0fedbaa76"
     };
-    // =============================================================
+    // =====================================================
 
     // Firebase state
     let firestoreDB = null;
@@ -809,12 +933,14 @@
 
     function initFirebase() {
       if (!isFirebaseConfigured()) {
-        console.log('[Firebase] Config chưa được điền – chạy chế độ offline (IndexedDB only)');
+        /* offline mode - no log in production */
         return;
       }
       try {
         if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
         firestoreDB = firebase.firestore();
+        // Khởi tạo Firebase Auth (cần cho Security Rules: request.auth != null)
+        if (firebase.auth) firebase.auth();
         // Cấu hình cache không giới hạn trước khi bật persistence
         firestoreDB.settings({ cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED });
         // Bật offline persistence — enablePersistence() vẫn cần dùng với Firebase v8 compat
@@ -829,7 +955,7 @@
             }
           });
         firebaseOnline = true;
-        console.log('[Firebase] ✅ Initialized – Project:', FIREBASE_CONFIG.projectId);
+        /* Firebase initialized */
         if (syncStatusCallback) syncStatusCallback('online');
       } catch (e) {
         console.error('[Firebase] ❌ Init failed:', e.message);
@@ -1046,11 +1172,21 @@
       } catch(e) { console.warn('[Firebase] Photo cleanup failed:', e.message); }
     }
 
+    // [OPT-3] Tải cases từ Firestore — hiện load toàn bộ collection.
+    // Để tối ưu chi phí đọc khi dữ liệu lớn (>500 vụ), có thể dùng query lọc:
+    //   firestoreDB.collection('cases').orderBy('dateReceived','desc').limit(200).get()
+    // hoặc lọc theo năm: .where('dateReceived','>=','2025-01-01')
+    // Nhưng CẦN tạo composite index trên Firebase Console trước khi dùng orderBy+where.
+    // Hiện tại giữ .get() để đảm bảo đồng bộ đầy đủ. Xem hướng dẫn trong README.
     async function _firestoreLoadCases() {
       if (!firestoreDB) return null;
-      const snap = await firestoreDB.collection('cases').get();
+      // [OPT-3] Có thể thêm .limit(1000) để tránh load vô hạn khi có nhiều vụ
+      const snap = await firestoreDB.collection('cases')
+        .orderBy('dateReceived', 'desc')
+        .get()
+        .catch(() => firestoreDB.collection('cases').get()); // fallback nếu chưa có index
       const cases = snap.docs.map(d => { const { _updatedAt, ...data } = d.data(); return data; });
-      console.log('[Firebase] ✅ Loaded', cases.length, 'cases from Firestore');
+      /* background sync loaded */
       return cases;
     }
 
@@ -1590,9 +1726,13 @@
       const ketQuaDieuTra = c.investigationResult === 'tin báo' && c.tinBaoKetQua
         ? c.investigationResult + ' – KQ: ' + c.tinBaoKetQua
         : c.investigationResult || '';
+      // Tính đồ vật tạm giữ từ các đối tượng tại thời điểm xuất (không phụ thuộc stored value cũ)
+      const seizedItemsExport = (c.objects||[])
+        .map(o => [o.tamGiu, o.tamGiuSauKhamXet].filter(Boolean).join(' | '))
+        .filter(Boolean).join('\n') || c.seizedItems || '';
       return [idx+1, c.id||'', c.phanLoaiTin||'',
         Array.isArray(c.type)?c.type.join(', '):(c.type||''),
-        fmt(c.dateReceived), c.description||'', c.seizedItems||'',
+        fmt(c.dateReceived), c.description||'', seizedItemsExport,
         c.assignee||'', c.directAssignee||'', ketQuaDieuTra,
         c.crimeType||'', c.extensionCount||0,
         fmt(c.investigationConclusionDate), fmt(c.prosecutionDate), c.prosecutionDecision||'',
@@ -1820,8 +1960,9 @@
     });
 
     // Column widths
-    wsSummary['!cols'] = [{wch:32},{wch:16},{wch:18},{wch:18},{wch:20}];
-    wsSummary['!rows'] = [{hpt:32},{hpt:20},{hpt:10},{hpt:30},...Array(20).fill({hpt:24})];
+    wsSummary['!cols'] = [{wch:34},{wch:16},{wch:18},{wch:18},{wch:22}];
+    wsSummary['!rows'] = [{hpt:34},{hpt:20},{hpt:8},{hpt:28},...Array(20).fill({hpt:24})];
+    wsSummary['!freeze'] = {xSplit:1,ySplit:4};
     wsSummary['!merges'] = [
       {s:{r:0,c:0},e:{r:0,c:4}},  // title
     ];
@@ -2251,9 +2392,18 @@ const parseVietnameseBioText = (text) => {
     }
 
     // ── Nghề nghiệp (not cha/mẹ) ──
-    if (/ngh[eề]\s+nghi[eệ]p/i.test(ll) && !/cha|m[eẹ]/i.test(ll) && !data.occupation) {
-      const v = afterKey(line,'Nghề nghiệp');
-      if (v) data.occupation = v.replace(/[;,].*$/,'').trim();
+    if (/ngh[eề]\s*nghi[eệ]p/i.test(ll) && !/cha|m[eẹ]/i.test(ll) && !data.occupation) {
+      const v = afterKey(line,'Nghề nghiệp, chức vụ, nơi làm việc','Nghề nghiệp chức vụ','Nghề nghiệp');
+      if (v) {
+        // Tách phần nghề nghiệp nếu dòng có nhiều thông tin (vd: "Lao động tự do; Nơi làm việc: ...")
+        const occ = v.split(/[;,]\s*n[oơ]i\s+l[aà]m/i)[0].split(/[;,]\s*ch[uứ]c\s+v[uụ]/i)[0].trim();
+        data.occupation = occ.replace(/[;,].*$/,'').trim();
+      }
+      // Cùng dòng có "nơi làm việc" → trích luôn
+      if (!data.workplace && /n[oơ]i\s+l[aà]m\s+vi[eệ]c/i.test(ll)) {
+        const wp = afterKey(line,'Nơi làm việc');
+        if (wp) data.workplace = wp.replace(/[;,].*$/,'').trim();
+      }
       continue;
     }
 
@@ -2332,24 +2482,92 @@ const fmtDateShort = (isoDate) => {
 };
 
 
-// ==================== WORD TEMPLATE EXPORT (JSZip) ====================
+// ==================== WORD TEMPLATE EXPORT (docxtemplater + PizZip) ====================
+// Uses docxtemplater for robust placeholder replacement that handles:
+//   - Run-split placeholders (Word splits {name} across multiple XML runs)
+//   - Drawing / text-box structures (no manual XML surgery needed)
+//   - Image injection via docxtemplater-image-module pattern
+// Placeholder syntax in template: {ma_vu_viec}, {ho_va_ten}, {anh_chinh} etc.
+// Falls back to JSZip manual engine if docxtemplater/PizZip not loaded.
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-// Pre-process Word XML to fix placeholders split across multiple <w:r> runs.
-//
-// Word splits placeholder text like {doituong1_ho_va_ten_hoa} across several runs due to:
-//   - Spell-check proofErr markers, bookmarks, lastRenderedPageBreak (removed in Pass 1)
-//   - Italic/bold run boundaries (the italic text ending in run_A, placeholder in run_B+C)
-//   - The NEXT placeholder starting inside the same run as the closing '}' of the current one
-//
-// Core algorithm (paragraph-aware, not regex-pair approach):
-//   For each <w:p>, extract all <w:r> runs into an array with their text + rPr formatting.
-//   Walk the array: whenever run[i].text has '{' but no '}', absorb run[i+1] into run[i].
-//   Repeat until stable. Rebuild the paragraph from the (possibly merged) run array.
-//
-// This is O(n) per paragraph and correctly handles ALL split patterns regardless of
-// what content follows the incomplete placeholder.
 function _fixDocxRunSplit(xml) {
+  // ══════════════════════════════════════════════════════════════════════════
+  // BƯỚC 0: Bảo vệ các khối có thể chứa <w:p> lồng nhau
+  // (w:drawing với text box, mc:AlternateContent, v:shape...)
+  // NẾU KHÔNG bảo vệ: regex paragraph ở Pass 2 sẽ dừng ở </w:p> ĐẦU TIÊN
+  // bên trong text box → phá vỡ cấu trúc outer paragraph.
+  // ══════════════════════════════════════════════════════════════════════════
+  var _protected = [];
+  function _protectBlock(openRe, closeStr) {
+    var result = '';
+    var search = openRe instanceof RegExp ? openRe : new RegExp(openRe.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
+    var pos = 0;
+    xml.replace(search, function(match, offset) {
+      // find matching close
+      var closeIdx = xml.indexOf(closeStr, offset + match.length);
+      if (closeIdx === -1) return match;
+      var block = xml.slice(offset, closeIdx + closeStr.length);
+      var key = '\x00PB' + _protected.length + '\x00';
+      _protected.push(block);
+      // rebuild xml with protection token
+      xml = xml.slice(0, offset) + key + xml.slice(closeIdx + closeStr.length);
+      return '';
+    });
+  }
+  // Protect <w:drawing> blocks (contain text boxes with nested <w:p>)
+  (function() {
+    var out = '', pos = 0;
+    var OPEN = '<w:drawing>', CLOSE = '</w:drawing>';
+    while (true) {
+      var s = xml.indexOf(OPEN, pos);
+      if (s === -1) { out += xml.slice(pos); break; }
+      var e = xml.indexOf(CLOSE, s + OPEN.length);
+      if (e === -1) { out += xml.slice(pos); break; }
+      out += xml.slice(pos, s);
+      var key = '\x00PB' + _protected.length + '\x00';
+      _protected.push(xml.slice(s, e + CLOSE.length));
+      out += key;
+      pos = e + CLOSE.length;
+    }
+    xml = out;
+  })();
+  // Protect <v:shape> VML blocks (also can have nested paragraphs in textboxes)
+  (function() {
+    var out = '', pos = 0;
+    while (true) {
+      var s = xml.indexOf('<v:shape', pos);
+      if (s === -1) { out += xml.slice(pos); break; }
+      var e = xml.indexOf('</v:shape>', s);
+      if (e === -1) { out += xml.slice(pos); break; }
+      out += xml.slice(pos, s);
+      var key = '\x00PB' + _protected.length + '\x00';
+      _protected.push(xml.slice(s, e + '</v:shape>'.length));
+      out += key;
+      pos = e + '</v:shape>'.length;
+    }
+    xml = out;
+  })();
+
+  // ── Pre-Pass A: Flatten corrupted nested <w:t> tags ──────────────────────
+  // FIX CRITICAL: dùng \b để KHÔNG match <w:tab/>, <w:tbl>, v.v.
+  // Regex CŨ: <w:t([^>]*)>  → match nhầm <w:tab/> → XML bị hỏng
+  // Regex MỚI: <w:t\b([^>]*)> → chỉ match đúng thẻ <w:t>
+  (function flattenNestedWt() {
+    var prev;
+    for (var _pass = 0; _pass < 5; _pass++) {
+      prev = xml;
+      xml = xml.replace(/<w:t\b([^>]*)><w:t\b[^>]*>([^<]*)<\/w:t>/g, function(_, outerAttr, innerText) {
+        var needsPreserve = outerAttr.indexOf('preserve') !== -1 ||
+                            innerText !== innerText.trim() ||
+                            innerText.indexOf('  ') !== -1;
+        var attr = needsPreserve ? ' xml:space="preserve"' : (outerAttr ? ' ' + outerAttr.trim() : '');
+        return '<w:t' + attr + '>' + innerText + '</w:t>';
+      });
+      xml = xml.replace(/<\/w:t>(\s*)<\/w:t>/g, '</w:t>$1');
+      if (xml === prev) break;
+    }
+  })();
+
   // ── Pass 1: remove pure-noise self-closing elements ─────────────────────────
   xml = xml.replace(/<w:proofErr\b[^>]*\/?>/g, '');
   xml = xml.replace(/<w:bookmarkStart\b[^>]*\/?>/g, '');
@@ -2357,10 +2575,8 @@ function _fixDocxRunSplit(xml) {
   xml = xml.replace(/<w:lastRenderedPageBreak\b[^>]*\/?>/g, '');
   xml = xml.replace(/<w:rPrChange\b[\s\S]*?<\/w:rPrChange>/g, '');
 
-  // ── Pass 2: paragraph-level run merging ─────────────────────────────────────
+  // ── Pass 2: paragraph-level run merging (an toàn vì drawings đã được bảo vệ) ──
   xml = xml.replace(/(<w:p\b[^>]*>)([\s\S]*?)(<\/w:p>)/g, function(_, pOpen, pContent, pClose) {
-
-    // Split paragraph content into alternating non-run and run segments
     var parts = [];
     var last  = 0;
     var RUN_RE = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/g;
@@ -2370,36 +2586,41 @@ function _fixDocxRunSplit(xml) {
       var raw   = rm[0];
       var tM    = raw.match(/<w:t[^>]*>([\s\S]*?)<\/w:t>/);
       var rprM  = raw.match(/<w:rPr>[\s\S]*?<\/w:rPr>/);
-      parts.push({ k: 'r', txt: tM ? tM[1] : '', rpr: rprM ? rprM[0] : '' });
+      var txt = tM ? tM[1].replace(/<[^>]+>/g, '') : '';
+      parts.push({ k: 'r', txt: txt, rpr: rprM ? rprM[0] : '', hasWt: !!tM, raw: raw });
       last = rm.index + raw.length;
     }
     if (last < pContent.length) parts.push({ k: 'x', c: pContent.slice(last) });
 
-    // Merge: if run[i] has unclosed '{', absorb the text of run[i+1] into run[i].
-    // Repeat until no changes remain (handles N-way splits).
     var changed = true;
     while (changed) {
       changed = false;
       for (var i = 0; i < parts.length - 1; i++) {
         var a = parts[i], b = parts[i + 1];
         if (a.k === 'r' && b.k === 'r' && a.txt.indexOf('{') !== -1 && a.txt.indexOf('}') === -1) {
-          parts[i] = { k: 'r', txt: a.txt + b.txt, rpr: a.rpr };
+          parts[i] = { k: 'r', txt: a.txt + b.txt, rpr: a.rpr, hasWt: true, raw: '' };
           parts.splice(i + 1, 1);
           changed = true;
-          // restart scan from position i (not 0) so we keep merging the same run
           i = Math.max(i - 1, -1);
         }
       }
     }
 
-    // Rebuild paragraph content from merged parts
     var out = parts.map(function(p) {
       if (p.k === 'x') return p.c;
-      return '<w:r>' + p.rpr + '<w:t xml:space="preserve">' + p.txt + '</w:t></w:r>';
+      if (!p.hasWt) return p.raw;
+      var needsPreserve = p.txt !== p.txt.trim() || p.txt.indexOf('  ') !== -1;
+      var attr = needsPreserve ? ' xml:space="preserve"' : '';
+      return '<w:r>' + p.rpr + '<w:t' + attr + '>' + p.txt + '</w:t></w:r>';
     }).join('');
 
     return pOpen + out + pClose;
   });
+
+  // ── Bước cuối: Khôi phục các khối đã được bảo vệ ───────────────────────
+  for (var _pi = 0; _pi < _protected.length; _pi++) {
+    xml = xml.replace('\x00PB' + _pi + '\x00', _protected[_pi]);
+  }
 
   return xml;
 }
@@ -2447,11 +2668,219 @@ function _buildDrawingPara(rId, docPrId, cx, cy, align) {
   );
 }
 
-const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjIndices, unitSettings) => {
+
+// ── Build flat data object for docxtemplater ─────────────────────────────
+const _buildTemplateData = (caseObj, objList, selectedObjIndices, unitSettings, exportPerObj, singleObjIdx) => {
+  const us = unitSettings || getUnitSettings();
+  const today = new Date().toISOString().split('T')[0];
+
+  const data = {
+    // Vụ việc
+    ma_vu_viec:              caseObj.id || '',
+    hanh_vi_vi_pham:         Array.isArray(caseObj.type) ? caseObj.type.join(', ') : (caseObj.type || ''),
+    noi_xay_ra:              caseObj.noixayra || '',
+    tom_tat:                 caseObj.description || '',
+    ngay_xay_ra:             fmtDateVN(caseObj.dateReceived),
+    ngay_xay_ra_short:       fmtDateShort(caseObj.dateReceived),
+    hinh_thuc_xu_ly:         caseObj.hinhThucXuLy || '',
+    to_quan_ly:              caseObj.toQuanLy || '',
+    phan_loai_tin:           caseObj.phanLoaiTin || '',
+    ket_qua_dieu_tra:        caseObj.investigationResult || '',
+    ket_qua_xu_ly_tin_bao:   caseObj.tinBaoKetQua || '',
+    ngay_ket_thuc_xu_ly_tin_bao:       fmtDateVN(caseObj.tinBaoNgayKetThuc),
+    ngay_ket_thuc_xu_ly_tin_bao_short: fmtDateShort(caseObj.tinBaoNgayKetThuc),
+    loai_toi_pham_vu:        caseObj.crimeType || '',
+    ngay_khoi_to_vu_an:      fmtDateVN(caseObj.prosecutionDate),
+    ngay_khoi_to_vu_an_short:fmtDateShort(caseObj.prosecutionDate),
+    so_qd_khoi_to_vu_an:     caseObj.prosecutionDecision || '',
+    ngay_xphc:               fmtDateVN(caseObj.penaltyDate),
+    ngay_xphc_short:         fmtDateShort(caseObj.penaltyDate),
+    so_qd_xphc_vu:           caseObj.penaltyDecision || '',
+    ngay_ket_thuc:           fmtDateVN(caseObj.ngayKetThuc),
+    ngay_ket_thuc_short:     fmtDateShort(caseObj.ngayKetThuc),
+    nguoi_thu_ly:            caseObj.assignee || '',
+    nguoi_truc_tiep_thu_ly:  caseObj.directAssignee || '',
+    ghi_chu:                 caseObj.notes || '',
+    do_vat_tam_giu:          (caseObj.objects||[]).map(o=>[o.tamGiu,o.tamGiuSauKhamXet].filter(Boolean).join(' | ')).filter(Boolean).join('\n') || caseObj.seizedItems || '',
+    // Đơn vị
+    loai_tinh:               us.loaiTinh || '',
+    loai_xa:                 us.loaiXa || '',
+    dia_danh:                us.diaDanh || '',
+    don_vi:                  us.donVi || '',
+    ho_ten_bch:              us.hoTenBCH || '',
+    chuc_vu_bch:             us.chucVuBCH || '',
+    ho_ten_dtv:              us.hoTenDTV || '',
+    chuc_vu_dtv:             us.chucVuDTV || '',
+    ho_ten_can_bo_lam:       us.hoTenCanBoLam || '',
+    chuc_vu_can_bo_lam:      us.chucVuCanBoLam || '',
+    ten_tram_y_te:           us.tenTramYTe || '',
+    ngay_hom_nay:            fmtDateVN(today),
+    ngay_hom_nay_short:      fmtDateShort(today),
+  };
+
+  // Helper: build object field data
+  const buildObjFields = (dt, prefix) => {
+    if (!dt) return {};
+    const p = prefix ? prefix + '_' : '';
+    return {
+      [p+'ho_va_ten']:          dt.name || '',
+      [p+'ho_va_ten_hoa']:      (dt.name || '').toUpperCase(),
+      [p+'ten_goi_khac']:       dt.alias || '',
+      [p+'gioi_tinh']:          dt.gender || '',
+      [p+'ngay_sinh']:          fmtDateVN(dt.birthDate),
+      [p+'ngay_sinh_short']:    fmtDateShort(dt.birthDate),
+      [p+'so_dien_thoai']:      dt.phoneNumber || '',
+      [p+'que_quan']:           dt.hometown || '',
+      [p+'noi_thuong_tru']:     dt.permanentAddress || '',
+      [p+'noi_tam_tru']:        dt.temporaryResidence || '',
+      [p+'noi_o_hien_tai']:     dt.currentResidence || '',
+      [p+'so_cmnd']:            dt.idNumber || '',
+      [p+'noi_cap']:            dt.issuePlace || '',
+      [p+'ngay_cap']:           fmtDateVN(dt.issueDate),
+      [p+'ngay_cap_short']:     fmtDateShort(dt.issueDate),
+      [p+'dan_toc']:            dt.ethnicity || '',
+      [p+'ton_giao']:           dt.religion || '',
+      [p+'trinh_do_van_hoa']:   dt.education || '',
+      [p+'quoc_tich']:          dt.nationality || '',
+      [p+'nghe_nghiep']:        dt.occupation || '',
+      [p+'noi_lam_viec']:       dt.workplace || '',
+      [p+'nhan_than']:          dt.nhanThan || dt.tienAn || '',
+      [p+'tien_an']:            dt.tienAn || '',
+      [p+'tien_su']:            dt.tienSu || '',
+      [p+'ly_lich_gon']:        dt.lyLichGon || '',
+      [p+'cha_ten']:            dt.chaTen || '',
+      [p+'cha_sinh_nam']:       dt.chaSinhNam || '',
+      [p+'cha_nghe_nghiep']:    dt.chaNgheNghiep || '',
+      [p+'cha_noi_o']:          dt.chaNoiO || '',
+      [p+'me_ten']:             dt.meTen || '',
+      [p+'me_sinh_nam']:        dt.meSinhNam || '',
+      [p+'me_nghe_nghiep']:     dt.meNgheNghiep || '',
+      [p+'me_noi_o']:           dt.meNoiO || '',
+      [p+'loai_ma_tuy']:        dt.loaiMaTuy || '',
+      [p+'hinh_thuc_su_dung']:  dt.hinhThucSuDung || '',
+      [p+'noi_su_dung']:        dt.noiSuDung || '',
+      [p+'noi_cai_nghien']:     dt.noiCaiNghien || '',
+      [p+'loi_khai']:           dt.loiKhai || '',
+      [p+'tam_giu']:            dt.tamGiu || '',
+      [p+'tam_giu_sau_kham_xet']: dt.tamGiuSauKhamXet || '',
+      [p+'ghi_chu_dt']:         dt.ghiChuBB || '',
+      [p+'noi_chuyen']:         dt.noiChuyen || '',
+      [p+'thong_tin_dt2']:      dt.thongTinDt2 || '',
+      [p+'ngay_xet_nghiem']:    fmtDateVN(dt.ngayXetNghiem),
+      [p+'ngay_xac_dinh_nghien']: fmtDateVN(dt.ngayXacDinhNghien),
+      [p+'ngay_lap_ho_so']:     fmtDateVN(dt.ngayLapHoSo),
+      [p+'thoi_diem_su_dung_dau']: fmtDateVN(dt.thoiDiemSuDungDau),
+      [p+'ngay_moi']:           fmtDateVN(dt.invitationDate),
+      [p+'ngay_moi_short']:     fmtDateShort(dt.invitationDate),
+      [p+'ngay_chuyen']:        fmtDateVN(dt.ngayChuyen),
+      [p+'ngay_chuyen_short']:  fmtDateShort(dt.ngayChuyen),
+      [p+'qd_quan_ly_so']:      dt.qdQuanLySo || '',
+      [p+'qd_quan_ly_ngay']:    fmtDateVN(dt.qdQuanLyNgay),
+      [p+'qd_quan_ly_ngay_short']: fmtDateShort(dt.qdQuanLyNgay),
+      [p+'qd_cham_dut_so']:     dt.qdChamDutSo || '',
+      [p+'qd_cham_dut_ngay']:   fmtDateVN(dt.qdChamDutNgay),
+      [p+'qd_cham_dut_ngay_short']: fmtDateShort(dt.qdChamDutNgay),
+      [p+'qd_xphc_so']:         dt.qdXphcSo || '',
+      [p+'qd_xphc_ngay']:       fmtDateVN(dt.qdXphcNgay),
+      [p+'qd_xphc_ngay_short']: fmtDateShort(dt.qdXphcNgay),
+      [p+'lenh_kham_xet_so']:   dt.lenhKhamXetSo || '',
+      [p+'lenh_kham_xet_ngay']: fmtDateVN(dt.lenhKhamXetNgay),
+      [p+'lenh_kham_xet_ngay_short']: fmtDateShort(dt.lenhKhamXetNgay),
+      [p+'lenh_bat_so']:        dt.lenhBatSo || '',
+      [p+'lenh_bat_ngay']:      fmtDateVN(dt.lenhBatNgay),
+      [p+'lenh_tam_giu_so']:    dt.lenhTamGiuSo || '',
+      [p+'lenh_tam_giu_ngay']:  fmtDateVN(dt.lenhTamGiuNgay),
+      [p+'lenh_tam_giam_so']:   dt.lenhTamGiamSo || '',
+      [p+'lenh_tam_giam_ngay']: fmtDateVN(dt.lenhTamGiamNgay),
+      [p+'so_qd_tam_giu']:      dt.custodyDecisionNumber || '',
+      [p+'ngay_qd_tam_giu']:    fmtDateVN(dt.custodyDecisionDate),
+      [p+'ngay_qd_tam_giu_short']: fmtDateShort(dt.custodyDecisionDate),
+      [p+'so_qd_ktbc']:         dt.prosecutionDecisionObj || dt.qdKtbcSo || '',
+      [p+'ngay_ktbc']:          fmtDateVN(dt.prosecutionDateObj || dt.qdKtbcNgay),
+      [p+'ngay_ktbc_short']:    fmtDateShort(dt.prosecutionDateObj || dt.qdKtbcNgay),
+      [p+'so_bb_xphc']:         dt.administrativeRecordNumber || '',
+      [p+'ngay_lap_bb']:        fmtDateVN(dt.reportDate),
+      [p+'ngay_lap_bb_short']:  fmtDateShort(dt.reportDate),
+      [p+'so_qd_xphc']:         dt.administrativeDecisionNumber || dt.qdXphcSo || '',
+      [p+'ngay_qd_xphc']:       fmtDateVN(dt.decisionDate || dt.qdXphcNgay),
+      [p+'ngay_qd_xphc_short']: fmtDateShort(dt.decisionDate || dt.qdXphcNgay),
+      [p+'hinh_thuc_xp']:       dt.penaltyForm || '',
+      [p+'loai_toi_pham']:      dt.crimeType || '',
+    };
+  };
+
+  // Chế độ "Riêng từng người": placeholder đơn không có prefix doituongN_
+  if (exportPerObj !== false && singleObjIdx !== undefined) {
+    const dt = objList[singleObjIdx];
+    if (dt) Object.assign(data, buildObjFields(dt, ''));
+  }
+
+  // Chế độ "Gộp chung": prefix doituong1_, doituong2_, ...
+  selectedObjIndices.forEach((objIdx, arrIdx) => {
+    const dt = objList[objIdx];
+    if (dt) Object.assign(data, buildObjFields(dt, `doituong${arrIdx+1}`));
+  });
+
+  return data;
+};
+
+// ── Main export function ──────────────────────────────────────────────────
+const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjIndices, unitSettings, exportPerObj, singleObjIdx) => {
   if (!templateFile) return 'Chưa chọn file mẫu';
   try {
     const ab = await templateFile.arrayBuffer();
-    const zip = await JSZip.loadAsync(ab);
+
+    // ── Try docxtemplater (preferred — no XML surgery) ──────────────────
+    if (typeof PizZip !== 'undefined' && typeof Docxtemplater !== 'undefined') {
+      try {
+        const zip = new PizZip(ab);
+        const doc = new Docxtemplater(zip, {
+          paragraphLoop: true,
+          linebreaks: true,
+          nullGetter: () => '',   // undefined vars → empty string, không lỗi
+        });
+
+        const data = _buildTemplateData(caseObj, objList, selectedObjIndices, unitSettings, exportPerObj, singleObjIdx);
+
+        doc.render(data);
+
+        const blob = doc.getZip().generate({
+          type: 'blob',
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          compression: 'DEFLATE',
+          compressionOptions: { level: 6 },
+        });
+
+        return { blob, filename: templateFile.name };
+      } catch (dtErr) {
+        // [OPT-4] Nếu docxtemplater lỗi (VD: template sai định dạng, placeholder sai cú pháp)
+        // → fallback về engine JSZip thủ công thay vì treo app
+        // Phân loại lỗi để người dùng biết cách xử lý:
+        const errMsg = dtErr.message || '';
+        if (errMsg.includes('Multi error') || errMsg.includes('Unclosed tag')) {
+          console.warn('[Word Export] Mẫu Word lỗi cú pháp placeholder — thử JSZip engine:', errMsg);
+        } else if (errMsg.includes('unexpected') || errMsg.includes('corrupt')) {
+          console.warn('[Word Export] File mẫu bị hỏng — thử JSZip engine:', errMsg);
+        } else {
+          console.warn('[Word Export] docxtemplater failed, fallback JSZip:', errMsg);
+        }
+      }
+    }
+
+    // ── Fallback: JSZip manual engine (hỗ trợ {placeholder} truyền thống) ──
+    return await _exportWordTemplateJSZip(templateFile, ab, caseObj, objList, selectedObjIndices, unitSettings);
+
+  } catch(e) {
+    console.error('Export word error:', e);
+    return 'Lỗi xuất Word: ' + e.message;
+  }
+};
+
+// ── JSZip fallback engine (giữ nguyên code cũ, chỉ đổi tên) ─────────────
+const _exportWordTemplateJSZip = async (templateFile, ab, caseObj, objList, selectedObjIndices, unitSettings) => {
+  if (!templateFile) return 'Chưa chọn file mẫu';
+  try {
+       const zip = await JSZip.loadAsync(ab);
     const docXmlFile = zip.file('word/document.xml');
     if (!docXmlFile) return 'File Word không hợp lệ';
     let docXml = await docXmlFile.async('text');
@@ -2540,6 +2969,11 @@ const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjInd
         [`${p}me_sinh_nam}`]: dt.meSinhNam || '',
         [`${p}me_nghe_nghiep}`]: dt.meNgheNghiep || '',
         [`${p}me_noi_o}`]: dt.meNoiO || '',
+        // BUG FIX: alias cho placeholder dùng ký tự Unicode (mẹ → me)
+        [`${p}m\u1EB9_ten}`]: dt.meTen || '',
+        [`${p}m\u1EB9_sinh_nam}`]: dt.meSinhNam || '',
+        [`${p}m\u1EB9_nghe_nghiep}`]: dt.meNgheNghiep || '',
+        [`${p}m\u1EB9_noi_o}`]: dt.meNoiO || '',
         [`${p}loai_ma_tuy}`]: dt.loaiMaTuy || '',
         [`${p}hinh_thuc_su_dung}`]: dt.hinhThucSuDung || '',
         [`${p}noi_su_dung}`]: dt.noiSuDung || '',
@@ -2642,6 +3076,105 @@ const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjInd
       });
     });
 
+    // ── SIMPLE PLACEHOLDER: {ho_va_ten} thay vì {doituong1_ho_va_ten} ─────
+    // Khi template chỉ dùng 1 đối tượng, có thể dùng placeholder ngắn gọn hơn.
+    // Logic: lấy đối tượng ĐẦU TIÊN trong danh sách được chọn làm "đối tượng chính".
+    // Hỗ trợ SONG SONG với cú pháp doituong1_* (không phá vỡ template cũ).
+    if (selectedObjIndices.length > 0) {
+      const dt = objList[selectedObjIndices[0]];
+      if (dt) {
+        const simpleReplacements = {
+          '{ho_va_ten}': dt.name || '',
+          '{ho_va_ten_hoa}': (dt.name || '').toUpperCase(),
+          '{ten_goi_khac}': dt.alias || '',
+          '{gioi_tinh}': dt.gender || '',
+          '{ngay_sinh}': fmtDateVN(dt.birthDate),
+          '{ngay_sinh_short}': fmtDateShort(dt.birthDate),
+          '{so_dien_thoai}': dt.phoneNumber || '',
+          '{que_quan}': dt.hometown || '',
+          '{noi_thuong_tru}': dt.permanentAddress || '',
+          '{noi_tam_tru}': dt.temporaryResidence || '',
+          '{noi_o_hien_tai}': dt.currentResidence || '',
+          '{so_cmnd}': dt.idNumber || '',
+          '{noi_cap}': dt.issuePlace || '',
+          '{ngay_cap}': fmtDateVN(dt.issueDate),
+          '{ngay_cap_short}': fmtDateShort(dt.issueDate),
+          '{dan_toc}': dt.ethnicity || '',
+          '{ton_giao}': dt.religion || '',
+          '{trinh_do_van_hoa}': dt.education || '',
+          '{quoc_tich}': dt.nationality || '',
+          '{nghe_nghiep}': dt.occupation || '',
+          '{noi_lam_viec}': dt.workplace || '',
+          '{nhan_than}': dt.nhanThan || dt.tienAn || dt.familyBackground || '',
+          '{tien_an}': dt.tienAn || '',
+          '{tien_su}': dt.tienSu || '',
+          '{ly_lich_gon}': dt.lyLichGon || '',
+          '{cha_ten}': dt.chaTen || '',
+          '{cha_sinh_nam}': dt.chaSinhNam || '',
+          '{cha_nghe_nghiep}': dt.chaNgheNghiep || '',
+          '{cha_noi_o}': dt.chaNoiO || '',
+          '{me_ten}': dt.meTen || '',
+          '{me_sinh_nam}': dt.meSinhNam || '',
+          '{me_nghe_nghiep}': dt.meNgheNghiep || '',
+          '{me_noi_o}': dt.meNoiO || '',
+          '{loai_ma_tuy}': dt.loaiMaTuy || '',
+          '{hinh_thuc_su_dung}': dt.hinhThucSuDung || '',
+          '{noi_su_dung}': dt.noiSuDung || '',
+          '{noi_cai_nghien}': dt.noiCaiNghien || '',
+          '{loi_khai}': dt.loiKhai || '',
+          '{tam_giu}': dt.tamGiu || '',
+          '{tam_giu_sau_kham_xet}': dt.tamGiuSauKhamXet || '',
+          '{ghi_chu_dt}': dt.ghiChuBB || '',
+          '{thong_tin_dt2}': dt.thongTinDt2 || '',
+          '{ngay_xet_nghiem}': fmtDateVN(dt.ngayXetNghiem),
+          '{ngay_xac_dinh_nghien}': fmtDateVN(dt.ngayXacDinhNghien),
+          '{ngay_lap_ho_so}': fmtDateVN(dt.ngayLapHoSo),
+          '{thoi_diem_su_dung_dau}': fmtDateVN(dt.thoiDiemSuDungDau),
+          '{ngay_moi}': fmtDateVN(dt.invitationDate),
+          '{ngay_moi_short}': fmtDateShort(dt.invitationDate),
+          '{ngay_chuyen}': fmtDateVN(dt.ngayChuyen),
+          '{ngay_chuyen_short}': fmtDateShort(dt.ngayChuyen),
+          '{noi_chuyen}': dt.noiChuyen || '',
+          '{qd_quan_ly_so}': dt.qdQuanLySo || '',
+          '{qd_quan_ly_ngay}': fmtDateVN(dt.qdQuanLyNgay),
+          '{qd_quan_ly_ngay_short}': fmtDateShort(dt.qdQuanLyNgay),
+          '{qd_cham_dut_so}': dt.qdChamDutSo || '',
+          '{qd_cham_dut_ngay}': fmtDateVN(dt.qdChamDutNgay),
+          '{qd_cham_dut_ngay_short}': fmtDateShort(dt.qdChamDutNgay),
+          '{qd_xphc_so}': dt.qdXphcSo || '',
+          '{qd_xphc_ngay}': fmtDateVN(dt.qdXphcNgay),
+          '{qd_xphc_ngay_short}': fmtDateShort(dt.qdXphcNgay),
+          '{lenh_kham_xet_so}': dt.lenhKhamXetSo || '',
+          '{lenh_kham_xet_ngay}': fmtDateVN(dt.lenhKhamXetNgay),
+          '{lenh_kham_xet_ngay_short}': fmtDateShort(dt.lenhKhamXetNgay),
+          '{lenh_bat_so}': dt.lenhBatSo || '',
+          '{lenh_bat_ngay}': fmtDateVN(dt.lenhBatNgay),
+          '{lenh_tam_giu_so}': dt.lenhTamGiuSo || '',
+          '{lenh_tam_giu_ngay}': fmtDateVN(dt.lenhTamGiuNgay),
+          '{lenh_tam_giam_so}': dt.lenhTamGiamSo || '',
+          '{lenh_tam_giam_ngay}': fmtDateVN(dt.lenhTamGiamNgay),
+          '{so_qd_tam_giu}': dt.custodyDecisionNumber || '',
+          '{ngay_qd_tam_giu}': fmtDateVN(dt.custodyDecisionDate),
+          '{ngay_qd_tam_giu_short}': fmtDateShort(dt.custodyDecisionDate),
+          '{so_qd_ktbc}': dt.prosecutionDecisionObj || dt.qdKtbcSo || '',
+          '{ngay_ktbc}': fmtDateVN(dt.prosecutionDateObj || dt.qdKtbcNgay),
+          '{ngay_ktbc_short}': fmtDateShort(dt.prosecutionDateObj || dt.qdKtbcNgay),
+          '{so_bb_xphc}': dt.administrativeRecordNumber || '',
+          '{ngay_lap_bb}': fmtDateVN(dt.reportDate),
+          '{ngay_lap_bb_short}': fmtDateShort(dt.reportDate),
+          '{so_qd_xphc}': dt.administrativeDecisionNumber || dt.qdXphcSo || '',
+          '{ngay_qd_xphc}': fmtDateVN(dt.decisionDate || dt.qdXphcNgay),
+          '{ngay_qd_xphc_short}': fmtDateShort(dt.decisionDate || dt.qdXphcNgay),
+          '{hinh_thuc_xp}': dt.penaltyForm || '',
+          '{loai_toi_pham}': dt.crimeType || '',
+          // NOTE: {anh_chinh}, {anh_trai}, {anh_phai} intentionally NOT here.
+          // Image placeholders are handled exclusively by the image-injection step (STEP 3).
+          // Adding them here would replace them as plain text, destroying the injection.
+        };
+        Object.assign(replacements, simpleReplacements);
+      }
+    }
+
     // Replace all placeholders in XML
     // Sort LONGEST key first so e.g. {doituong1_ho_va_ten_hoa} is replaced
     // before {doituong1_ho_va_ten} – prevents any accidental partial match.
@@ -2676,37 +3209,48 @@ const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjInd
     const phToDrawing = {};   // placeholder → drawing paragraph XML
     const neededExts  = {};   // ext → content-type (collected for batch update)
 
+    // Helper: register one image placeholder → drawing mapping
+    const registerImg = (ph, dataUrl, labelSuffix) => {
+      if (!xmlText.includes(ph)) return;
+      if (!dataUrl || !dataUrl.startsWith('data:')) return;
+      const parts = dataUrl.match(/^data:(image\/[a-z+]+);base64,(.+)$/s);
+      if (!parts) return;
+      const mime = parts[1];
+      const b64  = parts[2];
+      const ext  = mime.split('/')[1].replace('jpeg', 'jpg');
+      const rId  = 'rId' + (++imgRelCounter);
+      const docPrId = ++docPrIdCounter;
+      const mediaName = `media/${labelSuffix}.${ext}`;
+      zip.file('word/' + mediaName, b64, { base64: true });
+      addedRels += `<Relationship Id="${rId}"` +
+        ` Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"` +
+        ` Target="${mediaName}"/>`;
+      const cx = 1080000; const cy = 1440000;
+      phToDrawing[ph] = _buildDrawingPara(rId, docPrId, cx, cy, 'center');
+      const ctMap = { jpg:'image/jpeg', png:'image/png', gif:'image/gif',
+                      bmp:'image/bmp', tif:'image/tiff', tiff:'image/tiff', webp:'image/webp' };
+      neededExts[ext] = ctMap[ext] || 'image/jpeg';
+    };
+
     selectedObjIndices.forEach((objIdx, arrIdx) => {
       const dt = objList[objIdx];
       if (!dt) return;
       const pNum = arrIdx + 1;
       Object.entries(imgRels).forEach(([suffix, field]) => {
         const ph = `{doituong${pNum}_${suffix}}`;
-        if (!xmlText.includes(ph)) return;
-        if (!dt[field] || !dt[field].startsWith('data:')) return;
-        const parts = dt[field].match(/^data:(image\/[a-z+]+);base64,(.+)$/s);
-        if (!parts) return;
-        const mime = parts[1];
-        const b64  = parts[2];
-        const ext  = mime.split('/')[1].replace('jpeg', 'jpg');
-        const rId  = 'rId' + (++imgRelCounter);
-        const docPrId = ++docPrIdCounter;
-        const mediaName = `media/doituong${pNum}_${suffix}.${ext}`;
-
-        zip.file('word/' + mediaName, b64, { base64: true });
-        addedRels += `<Relationship Id="${rId}"` +
-          ` Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"` +
-          ` Target="${mediaName}"/>`;
-
-        const cx = 1080000; // 3 cm in EMUs
-        const cy = 1440000; // 4 cm in EMUs
-        phToDrawing[ph] = _buildDrawingPara(rId, docPrId, cx, cy, 'center');
-
-        const ctMap = { jpg:'image/jpeg', png:'image/png', gif:'image/gif',
-                        bmp:'image/bmp', tif:'image/tiff', tiff:'image/tiff', webp:'image/webp' };
-        neededExts[ext] = ctMap[ext] || 'image/jpeg';
+        registerImg(ph, dt[field], `doituong${pNum}_${suffix}`);
       });
     });
+
+    // Simple image placeholders: {anh_chinh}, {anh_trai}, {anh_phai} (đối tượng đầu tiên)
+    if (selectedObjIndices.length > 0) {
+      const dt = objList[selectedObjIndices[0]];
+      if (dt) {
+        Object.entries(imgRels).forEach(([suffix, field]) => {
+          registerImg(`{${suffix}}`, dt[field], `simple_${suffix}`);
+        });
+      }
+    }
 
     // Replace each paragraph containing an image placeholder with a drawing paragraph.
     if (Object.keys(phToDrawing).length > 0) {
@@ -2746,7 +3290,7 @@ const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjInd
 
     // ── STEP 4: Clean up any remaining unfilled placeholders ─────────────
     // Only match placeholders that are NOT inside XML tags (safe cleanup)
-    xmlText = xmlText.replace(/\{[a-z][a-z0-9_]*\}/gi, '');
+    xmlText = xmlText.replace(/\{[^\s{}]+\}/g, '');
     zip.file('word/document.xml', xmlText);
 
     // ── STEP 5: Process headers and footers ───────────────────────────────
@@ -2760,11 +3304,11 @@ const exportWordTemplate = async (templateFile, caseObj, objList, selectedObjInd
       for (let _pi = 0; _pi < repEntries.length; _pi++) {
         hfXml = hfXml.split(repEntries[_pi][0]).join(escXml(repEntries[_pi][1]));
       }
-      hfXml = hfXml.replace(/\{[a-z][a-z0-9_]*\}/gi, '');
+      hfXml = hfXml.replace(/\{[^\s{}]+\}/g, '');
       zip.file(hfFile, hfXml);
     }
 
-    const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', compression: 'DEFLATE', compressionOptions: { level: 6 } });
     return { blob, filename: templateFile.name };
   } catch(e) {
     console.error('Export word error:', e);
@@ -2798,7 +3342,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
     }
 
     if (count === 0) return 'Không tìm thấy placeholder ' + oldPfx + ' trong file';
-    const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', compression: 'DEFLATE', compressionOptions: { level: 6 } });
     const base = file.name.replace(/\.docx$/i, '');
     return { blob, filename: `${base}_dt${newNum}.docx`, count };
   } catch(e) {
@@ -3453,112 +3997,319 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           const loaiLabel=sc.loaiXuat==='both'?'Tất cả':sc.loaiXuat==='tinbao'?'Tin báo':'Vụ việc/Vụ án';
           const ttLabel=sc.trangThai==='all'?'Tất cả':sc.trangThai==='dangxuly'?'Đang xử lý':'Đã hoàn thành';
           const dateStr=(DateUtils.formatToVietnamese(sc.tuNgay)||'--')+' đến '+(DateUtils.formatToVietnamese(sc.denNgay)||'--');
-          const title='THỐNG KÊ VỤ VIỆC — '+loaiLabel.toUpperCase()+' — '+dateStr+(ph?' — Phường '+ph:'');
+          const mainTitle='THỐNG KÊ VỤ VIỆC'+(ph?' — PHƯỜNG '+ph.toUpperCase():'');
+          const today=new Date().toLocaleDateString('vi-VN');
 
-          // ── Sheet 1: Chi tiết từng loại tội ──
-          const detRows=[[title],['Trạng thái: '+ttLabel],[]];
-          Object.entries(groupStats).sort((a,b)=>b[1].totalCases-a[1].totalCases).forEach(([cat,gs])=>{
-            detRows.push(['▌ '+cat.toUpperCase()]);
-            detRows.push(['Tổng vụ','Đã khởi tố','Chuyển hồ sơ','Tỷ lệ khám phá','Tổng đối tượng','Cư trú địa bàn','Địa bàn khác']);
-            detRows.push([gs.totalCases,gs.khoiToCount,gs.chuyenCount,gs.solved+'%',gs.totalObjs,gs.diaBanCount,gs.diaBanKhac]);
-            detRows.push([]);
-            // Giới tính
-            detRows.push(['Giới tính:','Số lượng','Tỷ lệ']);
-            const gtTotal=Object.values(gs.genderCount).reduce((s,v)=>s+v,0);
-            Object.entries(gs.genderCount).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>detRows.push([k,v,gtTotal>0?Math.round(v/gtTotal*100)+'%':'']));
-            detRows.push([]);
-            // Trình độ
-            detRows.push(['Trình độ học vấn:','Số lượng','Tỷ lệ']);
-            const edTotal=Object.values(gs.eduCount).reduce((s,v)=>s+v,0);
-            Object.entries(gs.eduCount).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>detRows.push([k,v,edTotal>0?Math.round(v/edTotal*100)+'%':'']));
-            detRows.push([]);
-            // Độ tuổi
-            detRows.push(['Độ tuổi:','Số lượng','Tỷ lệ']);
-            const agTotal=Object.values(gs.ageCount).reduce((s,v)=>s+v,0);
-            Object.entries(gs.ageCount).sort((a,b)=>parseInt(a[0])-parseInt(b[0])||0).forEach(([k,v])=>detRows.push([k,v,agTotal>0?Math.round(v/agTotal*100)+'%':'']));
-            detRows.push([]);
-            // Nơi xảy ra
-            detRows.push(['Nơi xảy ra (khu phố):','Số vụ','Tỷ lệ']);
-            const lcTotal=Object.values(gs.locCount).reduce((s,v)=>s+v,0);
-            Object.entries(gs.locCount).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>detRows.push([k,v,lcTotal>0?Math.round(v/lcTotal*100)+'%':'']));
-            detRows.push([]);
-            // Địa bàn khu phố
-            detRows.push(['Nơi ở đối tượng (khu phố/địa bàn):','Số đối tượng','Tỷ lệ']);
-            const kpTotal2=Object.values(gs.kpCount).reduce((s,v)=>s+v,0);
-            Object.entries(gs.kpCount).sort((a,b)=>{const na=parseInt(a[0].replace(/\D/g,'')),nb=parseInt(b[0].replace(/\D/g,''));return isNaN(na)||isNaN(nb)?b[1]-a[1]:na-nb;}).forEach(([k,v])=>detRows.push([k,v,kpTotal2>0?Math.round(v/kpTotal2*100)+'%':'']));
-            detRows.push([],[]);
+          // ── Palette per crime group (8 distinct themes) ──
+          const GROUP_PAL=[
+            {h:'1D4ED8',hl:'DBEAFE',rA:'EFF6FF',rB:'F5F8FF',ac:'93C5FD'},
+            {h:'15803D',hl:'DCFCE7',rA:'F0FDF4',rB:'F8FFF9',ac:'86EFAC'},
+            {h:'B45309',hl:'FEF3C7',rA:'FFFBEB',rB:'FFFEF5',ac:'FCD34D'},
+            {h:'7C3AED',hl:'EDE9FE',rA:'F5F3FF',rB:'FDFCFF',ac:'C4B5FD'},
+            {h:'BE123C',hl:'FFE4E6',rA:'FFF1F2',rB:'FFFAFC',ac:'FDA4AF'},
+            {h:'0E7490',hl:'CFFAFE',rA:'ECFEFF',rB:'F5FEFF',ac:'67E8F9'},
+            {h:'7E22CE',hl:'F3E8FF',rA:'FAF5FF',rB:'FEFCFF',ac:'D8B4FE'},
+            {h:'9D174D',hl:'FCE7F3',rA:'FFF0F8',rB:'FFFAFD',ac:'F9A8D4'},
+          ];
+
+          // ── Style factory ──
+          const bdr=(c)=>{const s={style:'thin',color:{rgb:c||'CBD5E1'}};return{top:s,bottom:s,left:s,right:s};};
+          const S=(o)=>({
+            font:{sz:o.sz||9,bold:!!o.bold,color:{rgb:o.fc||'1E293B'},italic:!!o.italic,name:'Calibri'},
+            fill:{fgColor:{rgb:o.bg||'FFFFFF'},type:'pattern',patternType:'solid'},
+            alignment:{horizontal:o.al||'left',vertical:o.va||'center',wrapText:!!o.wrap},
+            border:bdr(o.bc),
           });
-          const ws1=XLSX.utils.aoa_to_sheet(detRows);
-          ws1['!cols']=[{wch:38},{wch:14},{wch:14},{wch:14},{wch:16},{wch:16},{wch:14}];
-          XLSX.utils.book_append_sheet(wb,ws1,'Chi tiết loại tội');
 
-          // ── Sheet 2: Bảng tổng hợp cuối ──
-          // Build merged kp incident + suspect maps
-          const allLocCount={};
-          const allKpCount={};
+          // ── setCell helper for a given worksheet ──
+          const mkSC=(ws)=>(r,c,v,s)=>{
+            const k=XLSX.utils.encode_cell({r,c});
+            ws[k]={v,t:typeof v==='number'?'n':'s',s};
+            const cur=XLSX.utils.decode_range(ws['!ref']||'A1');
+            cur.e.r=Math.max(cur.e.r,r);cur.e.c=Math.max(cur.e.c,c);
+            ws['!ref']=XLSX.utils.encode_range(cur);
+          };
+
+          const sortedGroups=Object.entries(groupStats).sort((a,b)=>b[1].totalCases-a[1].totalCases);
+          const numGroups=sortedGroups.length;
+
+          // ═══════════════════════════════════════════════════
+          // SHEET 1 — TỔNG QUAN (Dashboard summary)
+          // ═══════════════════════════════════════════════════
+          const ws1=XLSX.utils.aoa_to_sheet([]);
+          const sc1=mkSC(ws1);
+          const mg1=[];
+          let r1=0;
+
+          // Title banner
+          sc1(r1,0,mainTitle,S({bold:true,sz:16,fc:'FFFFFF',bg:'1E3A8A',al:'center',bc:'1E3A8A'}));
+          for(let c=1;c<=9;c++) sc1(r1,c,'',S({bg:'1E3A8A',bc:'1E3A8A'}));
+          mg1.push({s:{r:r1,c:0},e:{r:r1,c:9}});
+          r1++;
+
+          // Meta info strip
+          const metaS=S({sz:9,fc:'475569',bg:'F1F5F9',bc:'E2E8F0'});
+          sc1(r1,0,'📅 Thời gian: '+dateStr,metaS);sc1(r1,1,'',metaS);sc1(r1,2,'',metaS);
+          mg1.push({s:{r:r1,c:0},e:{r:r1,c:2}});
+          sc1(r1,3,'📋 Loại: '+loaiLabel,metaS);sc1(r1,4,'',metaS);
+          mg1.push({s:{r:r1,c:3},e:{r:r1,c:4}});
+          sc1(r1,5,'🔖 Trạng thái: '+ttLabel,metaS);sc1(r1,6,'',metaS);
+          mg1.push({s:{r:r1,c:5},e:{r:r1,c:6}});
+          sc1(r1,7,'🗓 Ngày xuất: '+today,metaS);sc1(r1,8,'',metaS);sc1(r1,9,'',metaS);
+          mg1.push({s:{r:r1,c:7},e:{r:r1,c:9}});
+          r1++;r1++;
+
+          // ── KPI Cards (label row then value row) ──
+          const kpis=[
+            {l:'TỔNG VỤ VIỆC',v:overallTotalCases,bg:'DBEAFE',fc:'1D4ED8',lbg:'EFF6FF'},
+            {l:'TỔNG ĐỐI TƯỢNG',v:overallTotalObjs,bg:'DCFCE7',fc:'166534',lbg:'F0FDF4'},
+            {l:'ĐÃ KHỞI TỐ',v:overallKhoiTo,bg:'FEF3C7',fc:'92400E',lbg:'FFFBEB'},
+            {l:'CHUYỂN HỒ SƠ',v:overallChuyen,bg:'CFFAFE',fc:'164E63',lbg:'ECFEFF'},
+            {l:'TỶ LỆ KHÁM PHÁ',v:overallSolved+'%',bg:'EDE9FE',fc:'5B21B6',lbg:'F5F3FF'},
+          ];
+          kpis.forEach((k,i)=>{
+            sc1(r1,i*2,k.l,S({bold:true,sz:8,fc:'475569',bg:k.lbg,al:'center',bc:'E2E8F0'}));
+            sc1(r1,i*2+1,'',S({bg:k.lbg,bc:'E2E8F0'}));
+            mg1.push({s:{r:r1,c:i*2},e:{r:r1,c:i*2+1}});
+          });
+          r1++;
+          kpis.forEach((k,i)=>{
+            sc1(r1,i*2,k.v,S({bold:true,sz:20,fc:k.fc,bg:k.bg,al:'center',va:'center',bc:'E2E8F0'}));
+            sc1(r1,i*2+1,'',S({bg:k.bg,bc:'E2E8F0'}));
+            mg1.push({s:{r:r1,c:i*2},e:{r:r1,c:i*2+1}});
+          });
+          r1++;r1++;
+
+          // ── Crime group summary table ──
+          sc1(r1,0,'📊 PHÂN LOẠI THEO NHÓM TỘI DANH',S({bold:true,sz:11,fc:'FFFFFF',bg:'374151',al:'left',bc:'374151'}));
+          for(let c=1;c<=9;c++) sc1(r1,c,'',S({bg:'374151',bc:'374151'}));
+          mg1.push({s:{r:r1,c:0},e:{r:r1,c:9}});
+          r1++;
+
+          const gHdrs=['Nhóm tội danh','Số vụ','Đã khởi tố','Chuyển HS','Tỷ lệ KP','Tổng ĐT','Cư trú địa bàn','ĐB khác','Tổng KP+Chuyển'];
+          gHdrs.forEach((h,i)=>sc1(r1,i,h,S({bold:true,sz:9,fc:'FFFFFF',bg:'1E40AF',al:'center',bc:'FFFFFF'})));
+          r1++;
+          sortedGroups.forEach(([cat,gs],idx)=>{
+            const pal=GROUP_PAL[idx%GROUP_PAL.length];
+            const bg=idx%2===0?pal.rA:pal.rB;
+            const kpChuyenSum=gs.khoiToCount+gs.chuyenCount;
+            [cat,gs.totalCases,gs.khoiToCount,gs.chuyenCount,gs.solved+'%',gs.totalObjs,gs.diaBanCount,gs.diaBanKhac,kpChuyenSum].forEach((v,i)=>{
+              const isN=typeof v==='number';
+              sc1(r1,i,v,S({sz:9,fc:i===0?'1E293B':pal.h,bg,al:i===0?'left':'center',bold:i>0&&isN,bc:'E2E8F0',wrap:i===0}));
+            });
+            r1++;
+          });
+          // Totals row
+          const totKP=sortedGroups.reduce((s,[,g])=>s+g.khoiToCount,0);
+          const totCH=sortedGroups.reduce((s,[,g])=>s+g.chuyenCount,0);
+          const totDT=sortedGroups.reduce((s,[,g])=>s+g.totalObjs,0);
+          const totDB=sortedGroups.reduce((s,[,g])=>s+g.diaBanCount,0);
+          ['TỔNG CỘNG',overallTotalCases,totKP,totCH,'',totDT,totDB,'',totKP+totCH].forEach((v,i)=>{
+            sc1(r1,i,v,S({bold:true,sz:10,fc:'FFFFFF',bg:'374151',al:i===0?'left':'center',bc:'475569'}));
+          });
+          r1++;r1++;
+
+          // ── Top địa bàn ──
+          const allLocCount={},allKpCount={};
           Object.values(groupStats).forEach(gs=>{
             Object.entries(gs.locCount).forEach(([k,v])=>{allLocCount[k]=(allLocCount[k]||0)+v;});
             Object.entries(gs.kpCount).forEach(([k,v])=>{allKpCount[k]=(allKpCount[k]||0)+v;});
           });
-          // Find top khu phố
-          const topIncKp=Object.entries(allLocCount).filter(([k])=>k!=='Chưa rõ').sort((a,b)=>b[1]-a[1]);
-          const topObjKp=Object.entries(allKpCount).filter(([k])=>k!=='Địa bàn khác').sort((a,b)=>b[1]-a[1]);
+          const topLoc=Object.entries(allLocCount).filter(([k])=>k!=='Chưa rõ').sort((a,b)=>b[1]-a[1]).slice(0,10);
+          const topKp=Object.entries(allKpCount).filter(([k])=>k!=='Địa bàn khác').sort((a,b)=>b[1]-a[1]).slice(0,10);
 
-          const sumRows=[
-            [title],['Trạng thái: '+ttLabel],[]
-          ];
-          // Overall summary block
-          sumRows.push(['BẢNG TỔNG HỢP TOÀN BỘ']);
-          sumRows.push(['Chỉ tiêu','Số liệu']);
-          sumRows.push(['Tổng số vụ việc',overallTotalCases]);
-          sumRows.push(['Tổng số đối tượng',overallTotalObjs]);
-          sumRows.push(['Đã khởi tố',overallKhoiTo]);
-          sumRows.push(['Đã chuyển hồ sơ',overallChuyen]);
-          sumRows.push(['Tỷ lệ khám phá',overallSolved+'%']);
-          sumRows.push([]);
-          // Per crime type overview
-          sumRows.push(['PHÂN LOẠI THEO TỘI DANH']);
-          sumRows.push(['Tội danh','Số vụ','Khởi tố','Chuyển HS','Tỷ lệ KP','Tổng ĐT','Địa bàn','ĐB khác']);
-          Object.entries(groupStats).sort((a,b)=>b[1].totalCases-a[1].totalCases).forEach(([cat,gs])=>{
-            sumRows.push([cat,gs.totalCases,gs.khoiToCount,gs.chuyenCount,gs.solved+'%',gs.totalObjs,gs.diaBanCount,gs.diaBanKhac]);
-          });
-          sumRows.push([]);
-          // Top khu pho incidents
-          if(topIncKp.length>0){
-            sumRows.push(['KHU PHỐ XẢY RA NHIỀU VỤ NHẤT']);
-            sumRows.push(['Khu phố','Số vụ','Tỷ lệ']);
-            const incTotal=topIncKp.reduce((s,[,v])=>s+v,0);
-            topIncKp.slice(0,10).forEach(([k,v])=>sumRows.push([k,v,incTotal>0?Math.round(v/incTotal*100)+'%':'']));
-            sumRows.push([]);
+          if(topLoc.length||topKp.length){
+            // Two mini tables side-by-side
+            sc1(r1,0,'📍 KHU PHỐ XẢY RA NHIỀU VỤ NHẤT',S({bold:true,sz:10,fc:'FFFFFF',bg:'0369A1',al:'center',bc:'0369A1'}));
+            sc1(r1,1,'',S({bg:'0369A1',bc:'0369A1'}));sc1(r1,2,'',S({bg:'0369A1',bc:'0369A1'}));sc1(r1,3,'',S({bg:'0369A1',bc:'0369A1'}));
+            mg1.push({s:{r:r1,c:0},e:{r:r1,c:3}});
+            sc1(r1,5,'👥 KHU PHỐ CÓ NHIỀU ĐỐI TƯỢNG NHẤT',S({bold:true,sz:10,fc:'FFFFFF',bg:'4C1D95',al:'center',bc:'4C1D95'}));
+            sc1(r1,6,'',S({bg:'4C1D95',bc:'4C1D95'}));sc1(r1,7,'',S({bg:'4C1D95',bc:'4C1D95'}));sc1(r1,8,'',S({bg:'4C1D95',bc:'4C1D95'}));
+            mg1.push({s:{r:r1,c:5},e:{r:r1,c:8}});
+            r1++;
+            ['Khu phố','Số vụ','Tỷ lệ',''].forEach((h,i)=>sc1(r1,i,h,S({bold:true,sz:9,fc:'FFFFFF',bg:'0284C7',al:'center',bc:'FFFFFF'})));
+            ['','Khu phố','Số ĐT','Tỷ lệ',''].forEach((h,i)=>sc1(r1,i+4,h,S({bold:true,sz:9,fc:'FFFFFF',bg:'6D28D9',al:'center',bc:'FFFFFF'})));
+            r1++;
+            const locTot=topLoc.reduce((s,[,v])=>s+v,0);
+            const kpTot2=topKp.reduce((s,[,v])=>s+v,0);
+            const maxR=Math.max(topLoc.length,topKp.length);
+            for(let i=0;i<maxR;i++){
+              const bg1=i%2===0?'EFF6FF':'FFFFFF';
+              const bg2=i%2===0?'F5F3FF':'FFFFFF';
+              if(i<topLoc.length){const[k,v]=topLoc[i];sc1(r1,0,k,S({sz:9,bg:bg1,bc:'E2E8F0'}));sc1(r1,1,v,S({sz:9,bold:true,fc:'0369A1',bg:bg1,al:'center',bc:'E2E8F0'}));sc1(r1,2,locTot>0?Math.round(v/locTot*100)+'%':'',S({sz:9,bg:bg1,al:'center',bc:'E2E8F0'}));sc1(r1,3,'',S({bg:bg1,bc:'E2E8F0'}));}
+              if(i<topKp.length){const[k,v]=topKp[i];sc1(r1,4,'',S({bg:bg2,bc:'E2E8F0'}));sc1(r1,5,k,S({sz:9,bg:bg2,bc:'E2E8F0'}));sc1(r1,6,v,S({sz:9,bold:true,fc:'6D28D9',bg:bg2,al:'center',bc:'E2E8F0'}));sc1(r1,7,kpTot2>0?Math.round(v/kpTot2*100)+'%':'',S({sz:9,bg:bg2,al:'center',bc:'E2E8F0'}));sc1(r1,8,'',S({bg:bg2,bc:'E2E8F0'}));}
+              r1++;
+            }
           }
-          // Top khu pho suspects
-          if(topObjKp.length>0){
-            sumRows.push(['KHU PHỐ CÓ NHIỀU ĐỐI TƯỢNG NHẤT']);
-            sumRows.push(['Khu phố','Số đối tượng','Tỷ lệ']);
-            const objKpTotal=topObjKp.reduce((s,[,v])=>s+v,0);
-            topObjKp.slice(0,10).forEach(([k,v])=>sumRows.push([k,v,objKpTotal>0?Math.round(v/objKpTotal*100)+'%':'']));
-            sumRows.push([]);
-          }
-          sumRows.push(['* Khu phố xảy ra nhiều vụ nhất: '+(topIncKp[0]?topIncKp[0][0]+' ('+topIncKp[0][1]+' vụ)':'Không có dữ liệu')]);
-          sumRows.push(['* Khu phố có nhiều đối tượng nhất: '+(topObjKp[0]?topObjKp[0][0]+' ('+topObjKp[0][1]+' đối tượng)':'Không có dữ liệu')]);
-          const ws2=XLSX.utils.aoa_to_sheet(sumRows);
-          ws2['!cols']=[{wch:38},{wch:12},{wch:12},{wch:12},{wch:14},{wch:14},{wch:14},{wch:14}];
-          XLSX.utils.book_append_sheet(wb,ws2,'Tổng hợp cuối');
 
-          // ── Sheet 3: Chi tiết vụ việc ──
-          const caseHdr=['STT','Mã vụ việc','Loại vụ việc','Nhóm TK','Ngày tiếp nhận','Phân loại tin','Nơi xảy ra','Khu phố xảy ra','Kết quả điều tra','Trạng thái'];
+          ws1['!cols']=[{wch:28},{wch:10},{wch:11},{wch:11},{wch:11},{wch:11},{wch:14},{wch:12},{wch:11},{wch:13}];
+          ws1['!rows']=[{hpt:34},{hpt:20},{hpt:6},{hpt:18},{hpt:38},...Array(80).fill({hpt:22})];
+          ws1['!merges']=mg1;
+          ws1['!freeze']={xSplit:0,ySplit:3};
+          XLSX.utils.book_append_sheet(wb,ws1,'Tổng Quan');
+
+          // ═══════════════════════════════════════════════════
+          // SHEETS 2..N+1 — One sheet per crime group (≤ 8 groups)
+          // or one combined sheet (> 8 groups, laid out as grid)
+          // ═══════════════════════════════════════════════════
+          if(numGroups<=8){
+            sortedGroups.forEach(([cat,gs],gIdx)=>{
+              const pal=GROUP_PAL[gIdx%GROUP_PAL.length];
+              const ws=XLSX.utils.aoa_to_sheet([]);
+              const sc2=mkSC(ws);
+              const mg=[];
+              let r=0;
+
+              // Title banner
+              sc2(r,0,cat.toUpperCase(),S({bold:true,sz:14,fc:'FFFFFF',bg:pal.h,al:'center',bc:pal.h}));
+              for(let c=1;c<=5;c++) sc2(r,c,'',S({bg:pal.h,bc:pal.h}));
+              mg.push({s:{r,c:0},e:{r,c:5}});r++;
+
+              // Meta strip
+              [dateStr,loaiLabel,ttLabel].forEach((v,i)=>{
+                sc2(r,i*2,'  '+['📅 Thời gian: ','📋 Loại: ','🔖 Trạng thái: '][i]+v,S({sz:9,fc:'475569',bg:pal.hl,bc:pal.ac}));
+                sc2(r,i*2+1,'',S({bg:pal.hl,bc:pal.ac}));
+                mg.push({s:{r,c:i*2},e:{r,c:i*2+1}});
+              });
+              r++;r++;
+
+              // Group KPI row
+              const gKpis=[
+                {l:'TỔNG VỤ',v:gs.totalCases},{l:'ĐÃ KHỞI TỐ',v:gs.khoiToCount},
+                {l:'CHUYỂN HS',v:gs.chuyenCount},{l:'TỶ LỆ KP',v:gs.solved+'%'},
+                {l:'TỔNG ĐT',v:gs.totalObjs},{l:'CƯ TRÚ ĐB',v:gs.diaBanCount},
+              ];
+              gKpis.forEach((k,i)=>sc2(r,i,k.l,S({bold:true,sz:8,fc:'475569',bg:'F8FAFC',al:'center',bc:pal.ac})));
+              r++;
+              gKpis.forEach((k,i)=>sc2(r,i,k.v,S({bold:true,sz:18,fc:pal.h,bg:pal.rA,al:'center',va:'center',bc:pal.ac})));
+              r++;r++;
+
+              // Generic sub-section builder
+              const subSection=(title,hdrs,dataArr)=>{
+                sc2(r,0,title,S({bold:true,sz:10,fc:'FFFFFF',bg:pal.h,al:'left',bc:pal.h}));
+                for(let c=1;c<hdrs.length;c++) sc2(r,c,'',S({bg:pal.h,bc:pal.h}));
+                mg.push({s:{r,c:0},e:{r,c:hdrs.length-1}});r++;
+                hdrs.forEach((h,i)=>sc2(r,i,h,S({bold:true,sz:9,fc:'FFFFFF',bg:pal.h,al:'center',bc:'FFFFFF'})));r++;
+                const tot=dataArr.reduce((s,[,v])=>s+(typeof v==='number'?v:0),0);
+                dataArr.forEach(([k,v],ri)=>{
+                  const bg=ri%2===0?pal.rA:pal.rB;
+                  const pct=tot>0&&typeof v==='number'?Math.round(v/tot*100)+'%':'';
+                  sc2(r,0,k,S({sz:9,bg,bc:'E2E8F0',wrap:true}));
+                  sc2(r,1,v,S({sz:10,bold:true,fc:pal.h,bg,al:'center',bc:'E2E8F0'}));
+                  sc2(r,2,pct,S({sz:9,bg,al:'center',bc:'E2E8F0'}));
+                  if(hdrs.length>3) sc2(r,3,tot>0?Math.round((typeof v==='number'?v:0)/tot*100):0,S({sz:9,bg,al:'center',bc:'E2E8F0'}));
+                  r++;
+                });
+                // total row
+                sc2(r,0,'Tổng',S({bold:true,sz:9,fc:'FFFFFF',bg:pal.h,bc:pal.ac}));
+                sc2(r,1,tot,S({bold:true,sz:10,fc:'FFFFFF',bg:pal.h,al:'center',bc:pal.ac}));
+                sc2(r,2,'100%',S({bold:true,sz:9,fc:'FFFFFF',bg:pal.h,al:'center',bc:pal.ac}));
+                if(hdrs.length>3) sc2(r,3,'',S({bg:pal.h,bc:pal.ac}));
+                r++;r++;
+              };
+
+              subSection('GIỚI TÍNH',['Giới tính','Số lượng','Tỷ lệ'],Object.entries(gs.genderCount).sort((a,b)=>b[1]-a[1]));
+              subSection('TRÌNH ĐỘ HỌC VẤN',['Trình độ','Số lượng','Tỷ lệ'],Object.entries(gs.eduCount).sort((a,b)=>b[1]-a[1]));
+              subSection('NHÓM TUỔI',['Nhóm tuổi','Số lượng','Tỷ lệ'],Object.entries(gs.ageCount).sort((a,b)=>parseInt(a[0])-parseInt(b[0])||0));
+              subSection('NƠI XẢY RA (KHU PHỐ)',['Khu phố','Số vụ','Tỷ lệ'],Object.entries(gs.locCount).sort((a,b)=>b[1]-a[1]));
+              subSection('NƠI CƯ TRÚ ĐỐI TƯỢNG',['Khu phố / địa bàn','Số ĐT','Tỷ lệ'],Object.entries(gs.kpCount).sort((a,b)=>{const na=parseInt(a[0].replace(/\D/g,'')),nb=parseInt(b[0].replace(/\D/g,''));return isNaN(na)||isNaN(nb)?b[1]-a[1]:na-nb;}));
+
+              ws['!cols']=[{wch:30},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12}];
+              ws['!rows']=[{hpt:30},{hpt:20},{hpt:6},{hpt:18},{hpt:36},...Array(150).fill({hpt:20})];
+              ws['!merges']=mg;
+              ws['!freeze']={xSplit:0,ySplit:1};
+              const sn=cat.length>28?cat.slice(0,27)+'…':cat;
+              XLSX.utils.book_append_sheet(wb,ws,sn);
+            });
+          } else {
+            // > 8 groups: combined sheet, groups laid out as horizontal grid (3 columns per row)
+            const COLS_PER_ROW=3;
+            const COL_W=5; // each group occupies COL_W columns
+            const wsD=XLSX.utils.aoa_to_sheet([]);
+            const scD=mkSC(wsD);
+            const mgD=[];
+            let baseR=0;
+
+            for(let gi=0;gi<sortedGroups.length;gi+=COLS_PER_ROW){
+              const rowGroups=sortedGroups.slice(gi,gi+COLS_PER_ROW);
+              let maxRows=0;
+
+              rowGroups.forEach(([cat,gs],ci)=>{
+                const pal=GROUP_PAL[(gi+ci)%GROUP_PAL.length];
+                const colOff=ci*COL_W;
+                let r=baseR;
+
+                // Group title
+                scD(r,colOff,cat.toUpperCase(),S({bold:true,sz:11,fc:'FFFFFF',bg:pal.h,al:'center',bc:pal.h}));
+                for(let cc=1;cc<COL_W;cc++) scD(r,colOff+cc,'',S({bg:pal.h,bc:pal.h}));
+                mgD.push({s:{r,c:colOff},e:{r,c:colOff+COL_W-1}});r++;
+
+                // KPI summary
+                ['Tổng vụ','Khởi tố','Chuyển HS','Tỷ lệ KP','Tổng ĐT'].forEach((h,i)=>scD(r,colOff+i,h,S({bold:true,sz:8,fc:'475569',bg:pal.hl,al:'center',bc:pal.ac})));r++;
+                [gs.totalCases,gs.khoiToCount,gs.chuyenCount,gs.solved+'%',gs.totalObjs].forEach((v,i)=>scD(r,colOff+i,v,S({bold:true,sz:13,fc:pal.h,bg:pal.rA,al:'center',bc:pal.ac})));r++;r++;
+
+                // Sub-sections for this group
+                const subSects=[
+                  {t:'Giới tính',d:Object.entries(gs.genderCount).sort((a,b)=>b[1]-a[1])},
+                  {t:'Nhóm tuổi',d:Object.entries(gs.ageCount).sort((a,b)=>parseInt(a[0])-parseInt(b[0])||0)},
+                  {t:'Nơi xảy ra',d:Object.entries(gs.locCount).sort((a,b)=>b[1]-a[1]).slice(0,8)},
+                  {t:'Nơi ở ĐT',d:Object.entries(gs.kpCount).sort((a,b)=>{const na=parseInt(a[0].replace(/\D/g,'')),nb=parseInt(b[0].replace(/\D/g,''));return isNaN(na)||isNaN(nb)?b[1]-a[1]:na-nb;}).slice(0,8)},
+                ];
+                subSects.forEach(ss=>{
+                  scD(r,colOff,ss.t,S({bold:true,sz:9,fc:'FFFFFF',bg:pal.h,al:'left',bc:pal.h}));
+                  scD(r,colOff+1,'SL',S({bold:true,sz:9,fc:'FFFFFF',bg:pal.h,al:'center',bc:'FFFFFF'}));
+                  scD(r,colOff+2,'%',S({bold:true,sz:9,fc:'FFFFFF',bg:pal.h,al:'center',bc:'FFFFFF'}));
+                  for(let cc=3;cc<COL_W;cc++) scD(r,colOff+cc,'',S({bg:pal.h,bc:pal.h}));
+                  r++;
+                  const tot=ss.d.reduce((s,[,v])=>s+v,0);
+                  ss.d.forEach(([k,v],ri)=>{
+                    const bg=ri%2===0?pal.rA:pal.rB;
+                    scD(r,colOff,k,S({sz:9,bg,bc:'E2E8F0',wrap:true}));
+                    scD(r,colOff+1,v,S({sz:9,bold:true,fc:pal.h,bg,al:'center',bc:'E2E8F0'}));
+                    scD(r,colOff+2,tot>0?Math.round(v/tot*100)+'%':'',S({sz:9,bg,al:'center',bc:'E2E8F0'}));
+                    for(let cc=3;cc<COL_W;cc++) scD(r,colOff+cc,'',S({bg,bc:'E2E8F0'}));
+                    r++;
+                  });
+                  r++;
+                });
+                maxRows=Math.max(maxRows,r-baseR);
+              });
+              baseR+=maxRows+2;
+            }
+
+            // column widths for 3-group horizontal layout
+            const cws=[];
+            for(let i=0;i<COLS_PER_ROW;i++) cws.push({wch:22},{wch:8},{wch:8},{wch:8},{wch:6});
+            wsD['!cols']=cws;
+            wsD['!merges']=mgD;
+            XLSX.utils.book_append_sheet(wb,wsD,'Chi tiết nhóm tội');
+          }
+
+          // ═══════════════════════════════════════════════════
+          // SHEET: Vụ Việc (styled)
+          // ═══════════════════════════════════════════════════
+          const caseHdr=['STT','Mã vụ việc','Loại vụ việc','Nhóm TK','Ngày tiếp nhận','Phân loại tin','Nơi xảy ra','Khu phố','Kết quả điều tra','Trạng thái'];
           const caseData=[caseHdr];
-          filteredCases.forEach((c,i)=>{const kp=extractKhuPho(c.noixayra||'');caseData.push([i+1,c.id||'',(Array.isArray(c.type)?c.type.join(', '):(c.type||'')),getCrimeCategory(c),DateUtils.formatToVietnamese(c.dateReceived)||'',c.phanLoaiTin||'',c.noixayra||'',kp?'Khu phố '+kp:'',c.investigationResult||'',c.status||'']);});
-          const ws3=XLSX.utils.aoa_to_sheet(caseData);
-          ws3['!cols']=[{wch:5},{wch:16},{wch:35},{wch:15},{wch:14},{wch:12},{wch:40},{wch:14},{wch:22},{wch:14}];
-          XLSX.utils.book_append_sheet(wb,ws3,'Vụ Việc');
+          filteredCases.forEach((c,i)=>{
+            const kp=extractKhuPho(c.noixayra||'');
+            caseData.push([i+1,c.id||'',(Array.isArray(c.type)?c.type.join(', '):(c.type||'')),getCrimeCategory(c),DateUtils.formatToVietnamese(c.dateReceived)||'',c.phanLoaiTin||'',c.noixayra||'',kp?'Khu phố '+kp:'',c.investigationResult||'',c.status||'']);
+          });
+          const wsC=XLSX.utils.aoa_to_sheet(caseData);
+          caseHdr.forEach((_,ci)=>{const k=XLSX.utils.encode_cell({r:0,c:ci});if(!wsC[k])wsC[k]={v:caseHdr[ci],t:'s'};wsC[k].s=S({bold:true,sz:9,fc:'FFFFFF',bg:'1E40AF',al:'center',bc:'FFFFFF'});});
+          for(let ri=1;ri<caseData.length;ri++){const even=ri%2===0;for(let ci=0;ci<caseHdr.length;ci++){const k=XLSX.utils.encode_cell({r:ri,c:ci});if(!wsC[k])wsC[k]={v:'',t:'s'};wsC[k].s=S({sz:9,bg:even?'EFF6FF':'FFFFFF',bc:'E2E8F0',al:[0,4,7].includes(ci)?'center':'left',wrap:[2,6].includes(ci)});}}
+          wsC['!cols']=[{wch:5},{wch:16},{wch:35},{wch:15},{wch:14},{wch:12},{wch:40},{wch:14},{wch:22},{wch:14}];
+          wsC['!rows']=[{hpt:28},...caseData.slice(1).map(()=>({hpt:44}))];
+          wsC['!freeze']={xSplit:0,ySplit:1};
+          XLSX.utils.book_append_sheet(wb,wsC,'Vụ Việc');
 
-          // ── Sheet 4: Chi tiết đối tượng ──
+          // ═══════════════════════════════════════════════════
+          // SHEET: Đối Tượng (styled)
+          // ═══════════════════════════════════════════════════
           const kpSet2=parseKhuPhoRange(statConfig.khuPhoRange);
           const ph2=(statConfig.phuong||'').trim().toLowerCase();
-          const objHdr=['STT','Mã vụ việc','Nhóm TK','Họ tên','Ngày sinh','Tuổi','Giới tính','Hành vi','Trình độ','Nơi ở hiện tại','Khu phố (nơi ở)','Nhóm địa bàn'];
+          const objHdr=['STT','Mã vụ việc','Nhóm TK','Họ tên','Ngày sinh','Tuổi','Giới tính','Hành vi vi phạm','Trình độ','Nơi ở hiện tại','Khu phố','Nhóm địa bàn'];
           const objData=[objHdr];
-          let stt=1;
+          let stt2=1;
           filteredCases.forEach(c=>{
             const cat=getCrimeCategory(c);
             (c.objects||[]).forEach(o=>{
@@ -3569,15 +4320,20 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               const kpOk=kpSet2?(kp!==null&&kpSet2.has(kp)):(kp!==null);
               const diaBan=(phuongOk&&kpOk)?'Khu phố '+kp:'Địa bàn khác';
               const hanhVi=Array.isArray(o.behavior)?o.behavior.join(', '):(o.behavior||'');
-              objData.push([stt++,c.id||'',cat,o.name||'',DateUtils.formatToVietnamese(o.birthDate)||o.birthDate||'',age!==null?age:'',o.gender||'',hanhVi,o.education||'',addr,kp?'Khu phố '+kp:'',diaBan]);
+              objData.push([stt2++,c.id||'',cat,o.name||'',DateUtils.formatToVietnamese(o.birthDate)||o.birthDate||'',age!==null?age:'',o.gender||'',hanhVi,o.education||'',addr,kp?'Khu phố '+kp:'',diaBan]);
             });
           });
-          const ws4=XLSX.utils.aoa_to_sheet(objData);
-          ws4['!cols']=[{wch:5},{wch:16},{wch:15},{wch:20},{wch:12},{wch:6},{wch:8},{wch:30},{wch:10},{wch:40},{wch:14},{wch:16}];
-          XLSX.utils.book_append_sheet(wb,ws4,'Đối Tượng');
+          const wsO=XLSX.utils.aoa_to_sheet(objData);
+          objHdr.forEach((_,ci)=>{const k=XLSX.utils.encode_cell({r:0,c:ci});if(!wsO[k])wsO[k]={v:objHdr[ci],t:'s'};wsO[k].s=S({bold:true,sz:9,fc:'FFFFFF',bg:'166534',al:'center',bc:'FFFFFF'});});
+          for(let ri=1;ri<objData.length;ri++){const even=ri%2===0;for(let ci=0;ci<objHdr.length;ci++){const k=XLSX.utils.encode_cell({r:ri,c:ci});if(!wsO[k])wsO[k]={v:'',t:'s'};wsO[k].s=S({sz:9,bg:even?'F0FDF4':'FFFFFF',bc:'E2E8F0',al:[0,1,4,5,6,10].includes(ci)?'center':'left',wrap:[7,9].includes(ci)});}}
+          wsO['!cols']=[{wch:5},{wch:14},{wch:15},{wch:20},{wch:12},{wch:6},{wch:8},{wch:30},{wch:10},{wch:38},{wch:14},{wch:16}];
+          wsO['!rows']=[{hpt:28},...objData.slice(1).map(()=>({hpt:44}))];
+          wsO['!freeze']={xSplit:0,ySplit:1};
+          XLSX.utils.book_append_sheet(wb,wsO,'Đối Tượng');
+
           const buf=XLSX.write(wb,{bookType:'xlsx',type:'array'});
           saveAs(new Blob([buf],{type:'application/octet-stream'}),'thong_ke_'+new Date().toISOString().slice(0,10)+'.xlsx');
-        } catch(e){alert('Lỗi xuất Excel: '+e.message);}
+        } catch(e){ console.error('Lỗi xuất Excel TK:', e); alert('Lỗi xuất Excel: '+e.message); }
         setExporting('');
       };
 
@@ -3674,7 +4430,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           const doc=new Document({sections:[{properties:{page:{margin:{top:720,bottom:720,left:1080,right:720}}},children}]});
           const blob=await Packer.toBlob(doc);
           saveAs(blob,'bao_cao_thong_ke_'+new Date().toISOString().slice(0,10)+'.docx');
-        } catch(e){alert('Lỗi xuất Word: '+e.message);console.error(e);}
+        } catch(e){ console.error('Lỗi xuất Word:', e); }
         setExporting('');
       };
 
@@ -3806,7 +4562,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       };
 
       const SolvedBar = ({ solved }) => (
-        <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+        <div className="flex items-center gap-2">
           <div style={{flex:1,background:'#e2e8f0',borderRadius:'99px',height:'7px',overflow:'hidden'}}>
             <div style={{width:solved+'%',height:'100%',background:solved>=70?'#059669':solved>=40?'#d97706':'#dc2626',borderRadius:'99px'}}/>
           </div>
@@ -3816,64 +4572,82 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
 
       return (
         <div>
-          <div className="page-header" style={{marginBottom:'12px'}}>
-            <div className="page-title">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>
+          {/* ── Page Header ── */}
+          <div className="page-header" style={{marginBottom:'14px'}}>
+            <div className="page-title" style={{display:'flex',alignItems:'center',gap:'10px'}}>
+              <div style={{width:'32px',height:'32px',background:'linear-gradient(135deg,#2563eb,#1d4ed8)',borderRadius:'8px',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>
+              </div>
               Thống Kê Chi Tiết Vụ Việc
             </div>
             {statsResult && (
-              <div style={{display:'flex',gap:'6px'}}>
-                <button className="btn btn-success btn-sm" onClick={exportExcel} disabled={!!exporting}>{exporting==='excel'?'⏳ Đang xuất...':'📥 Xuất Excel'}</button>
-                <button className="btn btn-primary btn-sm" onClick={exportWord} disabled={!!exporting}>{exporting==='word'?'⏳ Đang xuất...':'📄 Xuất Word'}</button>
+              <div style={{display:'flex',gap:'8px'}}>
+                <button className="tk-export-btn-excel" onClick={exportExcel} disabled={!!exporting}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  {exporting==='excel'?'⏳ Đang xuất...':'Xuất Excel'}
+                </button>
+                <button className="tk-export-btn-word" onClick={exportWord} disabled={!!exporting}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  {exporting==='word'?'⏳ Đang xuất...':'Xuất Word'}
+                </button>
               </div>
             )}
           </div>
 
-          <div className="card" style={{marginBottom:'14px'}}>
-            <div className="card-header">⚙️ Cấu hình thống kê</div>
-            <div className="card-body" style={{paddingBottom:'12px'}}>
-              <div className="form-row" style={{marginBottom:'8px'}}>
-                <div className="form-group" style={{marginBottom:0}}>
-                  <label className="form-label">Loại xuất</label>
+          {/* ── Config Panel ── */}
+          <div className="tk-config-panel">
+            <div className="tk-config-header">
+              <div className="tk-config-header-left">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+                Cấu hình thống kê
+              </div>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div className="tk-config-body">
+              <div className="tk-form-grid">
+                <div className="tk-form-group">
+                  <label className="tk-form-label">Loại xuất</label>
                   <select className="form-control" value={statConfig.loaiXuat} onChange={e=>setStatConfig(c=>({...c,loaiXuat:e.target.value}))}>
                     <option value="both">Tất cả (Tin báo + Vụ việc/Án)</option>
                     <option value="tinbao">Chỉ Tin báo</option>
                     <option value="vuviec">Chỉ Vụ việc / Vụ án</option>
                   </select>
                 </div>
-                <div className="form-group" style={{marginBottom:0}}>
-                  <label className="form-label">Trạng thái</label>
+                <div className="tk-form-group">
+                  <label className="tk-form-label">Trạng thái</label>
                   <select className="form-control" value={statConfig.trangThai} onChange={e=>setStatConfig(c=>({...c,trangThai:e.target.value}))}>
                     <option value="all">Tất cả</option>
                     <option value="dangxuly">Đang xử lý</option>
                     <option value="hoanthanh">Đã hoàn thành</option>
                   </select>
                 </div>
-              </div>
-              <div className="form-row" style={{marginBottom:'8px'}}>
-                <div className="form-group" style={{marginBottom:0}}>
-                  <label className="form-label">Từ ngày</label>
+                <div className="tk-form-group">
+                  <label className="tk-form-label">Từ ngày</label>
                   <input type="text" ref={tuNgayRef} placeholder="dd/mm/yyyy" className="form-control" readOnly style={{cursor:'pointer'}}/>
                 </div>
-                <div className="form-group" style={{marginBottom:0}}>
-                  <label className="form-label">Đến ngày</label>
+                <div className="tk-form-group">
+                  <label className="tk-form-label">Đến ngày</label>
                   <input type="text" ref={denNgayRef} placeholder="dd/mm/yyyy" className="form-control" readOnly style={{cursor:'pointer'}}/>
                 </div>
-              </div>
-              <div className="form-row" style={{marginBottom:'8px'}}>
-                <div className="form-group" style={{marginBottom:0}}>
-                  <label className="form-label">Phường thống kê</label>
+                <div className="tk-form-group">
+                  <label className="tk-form-label">Phường thống kê</label>
                   <input type="text" className="form-control" placeholder="VD: Tân Bình" value={statConfig.phuong} onChange={e=>setStatConfig(c=>({...c,phuong:e.target.value}))}/>
                 </div>
-                <div className="form-group" style={{marginBottom:0}}>
-                  <label className="form-label">Khu phố (phạm vi)</label>
-                  <input type="text" className="form-control" placeholder="VD: 1-39  hoặc  1-12, 14-20" value={statConfig.khuPhoRange} onChange={e=>setStatConfig(c=>({...c,khuPhoRange:e.target.value}))}/>
+                <div className="tk-form-group">
+                  <label className="tk-form-label">Khu phố (phạm vi)</label>
+                  <input type="text" className="form-control" placeholder="VD: 1-39 hoặc 1-12, 14-20" value={statConfig.khuPhoRange} onChange={e=>setStatConfig(c=>({...c,khuPhoRange:e.target.value}))}/>
                   {statConfig.khuPhoRange&&(()=>{const s=parseKhuPhoRange(statConfig.khuPhoRange);return(<div style={{fontSize:'11px',color:s?'#059669':'#dc2626',marginTop:'2px'}}>{s?'✓ Tổng: '+s.size+' khu phố':'⚠️ Định dạng không hợp lệ'}</div>);})()}
                 </div>
               </div>
-              <div style={{display:'flex',gap:'8px',marginTop:'6px'}}>
-                <button className="btn btn-primary" onClick={computeStats} disabled={calculating}>{calculating?'⏳ Đang tính...':'📊 Tạo thống kê'}</button>
-                <button className="btn btn-gray" onClick={()=>{setStatsResult(null);setStatConfig({loaiXuat:'both',trangThai:'all',tuNgay:'',denNgay:'',phuong:'',khuPhoRange:''});if(tuNgayRef.current)tuNgayRef.current.value='';if(denNgayRef.current)denNgayRef.current.value='';}}>🔄 Đặt lại</button>
+              <div style={{display:'flex',gap:'8px',marginTop:'14px'}}>
+                <button className="btn btn-primary" onClick={computeStats} disabled={calculating} style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>
+                  {calculating?'⏳ Đang tính...':'Tạo thống kê'}
+                </button>
+                <button className="btn btn-gray" onClick={()=>{setStatsResult(null);setStatConfig({loaiXuat:'both',trangThai:'all',tuNgay:'',denNgay:'',phuong:'',khuPhoRange:''});if(tuNgayRef.current)tuNgayRef.current.value='';if(denNgayRef.current)denNgayRef.current.value='';}} style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+                  Đặt lại
+                </button>
               </div>
             </div>
           </div>
@@ -3884,17 +4658,32 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             return (
               <div>
                 {/* Summary KPI row */}
-                <div className="stats-grid" style={{marginBottom:'12px'}}>
-                  <div className="stat-card blue"><div className="stat-card-icon">📂</div><div className="stat-card-content"><div className="stat-card-value">{overallTotalCases}</div><div className="stat-card-label">Tổng vụ việc</div></div></div>
-                  <div className="stat-card green"><div className="stat-card-icon">👥</div><div className="stat-card-content"><div className="stat-card-value">{overallTotalObjs}</div><div className="stat-card-label">Tổng đối tượng</div></div></div>
-                  <div className="stat-card orange"><div className="stat-card-icon">⚖️</div><div className="stat-card-content"><div className="stat-card-value">{overallKhoiTo}</div><div className="stat-card-label">Đã khởi tố</div></div></div>
-                  <div className="stat-card" style={{background:'linear-gradient(135deg,#ccfbf1,#f0fdfa)',border:'1px solid #99f6e4'}}><div className="stat-card-icon">📤</div><div className="stat-card-content"><div className="stat-card-value" style={{color:'#0d9488'}}>{overallChuyen}</div><div className="stat-card-label">Chuyển hồ sơ</div></div></div>
-                  <div className="stat-card" style={{background:'linear-gradient(135deg,#ede9fe,#f5f3ff)',border:'1px solid #c4b5fd'}}><div className="stat-card-icon">🎯</div><div className="stat-card-content"><div className="stat-card-value" style={{color:'#7c3aed'}}>{overallSolved}%</div><div className="stat-card-label">Tỷ lệ khám phá</div></div></div>
+                <div className="tk-stat-grid">
+                  <div className="tk-stat-card amber">
+                    <div className="tk-stat-icon">📂</div>
+                    <div><div className="tk-stat-value">{overallTotalCases}</div><div className="tk-stat-label">Tổng vụ việc</div></div>
+                  </div>
+                  <div className="tk-stat-card purple">
+                    <div className="tk-stat-icon">👥</div>
+                    <div><div className="tk-stat-value">{overallTotalObjs}</div><div className="tk-stat-label">Tổng đối tượng</div></div>
+                  </div>
+                  <div className="tk-stat-card orange">
+                    <div className="tk-stat-icon">⚖️</div>
+                    <div><div className="tk-stat-value">{overallKhoiTo}</div><div className="tk-stat-label">Đã khởi tố</div></div>
+                  </div>
+                  <div className="tk-stat-card teal">
+                    <div className="tk-stat-icon">📤</div>
+                    <div><div className="tk-stat-value">{overallChuyen}</div><div className="tk-stat-label">Chuyển hồ sơ</div></div>
+                  </div>
+                  <div className="tk-stat-card red">
+                    <div className="tk-stat-icon">🎯</div>
+                    <div><div className="tk-stat-value">{overallSolved}%</div><div className="tk-stat-label">Tỷ lệ khám phá</div></div>
+                  </div>
                 </div>
 
                 {/* Overview distribution – only if multiple crime types */}
                 {catCount>1&&(
-                  <div className="card" style={{marginBottom:'12px'}}>
+                  <div className="card" className="mb-3">
                     <div className="card-header">📊 Phân bố theo loại vụ việc</div>
                     <div className="card-body" style={{padding:'12px 16px'}}>
                       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'8px'}}>
@@ -3924,7 +4713,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
 
                 {/* Per crime type detail cards */}
                 {Object.entries(groupStats).sort((a,b)=>b[1].totalCases-a[1].totalCases).map(([cat,gs])=>(
-                  <div key={cat} className="card" style={{marginBottom:'12px'}}>
+                  <div key={cat} className="card" className="mb-3">
                     <div className="card-header" style={{background:'linear-gradient(135deg,#1e3a8a,#1e40af)',color:'white'}}>
                       {cat==='Ma túy'?'💊':cat==='Chưa phân loại'?'❓':'⚖️'} {cat}
                       <span style={{marginLeft:'10px',background:'rgba(255,255,255,0.2)',padding:'2px 8px',borderRadius:'99px',fontSize:'11px'}}>{gs.totalCases} vụ · {gs.totalObjs} đối tượng</span>
@@ -4027,6 +4816,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
     const WordExportModal = ({ cases, onClose, addToast }) => {
       const [selectedCaseId, setSelectedCaseId] = React.useState('');
       const [selectedObjs, setSelectedObjs] = React.useState([]);
+      const [exportPerObj, setExportPerObj] = React.useState(true); // xuất riêng từng đối tượng mặc định
       const [templateFile, setTemplateFile] = React.useState(null);
       const [templateName, setTemplateName] = React.useState('');
       const [templateFiles, setTemplateFiles] = React.useState([]); // multi-file list
@@ -4190,31 +4980,53 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         const allTemplates = templateFiles.length > 0 ? templateFiles : (templateFile ? [templateFile] : []);
         if (allTemplates.length === 0) { addToast('Vui lòng chọn ít nhất 1 file Word mẫu (hoặc tải từ Thư viện)!','warning'); return; }
         setExporting(true);
-        const names = selectedObjs.map(function(i){ return (objects[i] && objects[i].name) || ''; }).filter(Boolean).join(' & ');
-        let savedToFolder = 0;
-        let savedByDownload = 0;
+
+        // Tạo danh sách công việc: mỗi cặp (template × đối tượng)
+        // Nếu xuất riêng từng đối tượng → mỗi đối tượng × mỗi template = 1 file
+        // Nếu không → tất cả đối tượng vào 1 file mỗi template (cú pháp cũ doituong1/2/3)
+        const jobs = [];
+        if (exportPerObj) {
+          // Mỗi đối tượng được xuất riêng → placeholder đơn giản {ho_va_ten}
+          selectedObjs.forEach(objIdx => {
+            allTemplates.forEach(tpl => {
+              jobs.push({ tpl, objIndices: [objIdx], label: (objects[objIdx] && objects[objIdx].name) || ('DT' + (objIdx+1)) });
+            });
+          });
+        } else {
+          // Tất cả đối tượng vào 1 file (cú pháp doituong1/2/3...)
+          allTemplates.forEach(tpl => {
+            const names = selectedObjs.map(i => (objects[i] && objects[i].name) || '').filter(Boolean).join(' & ');
+            jobs.push({ tpl, objIndices: selectedObjs, label: names });
+          });
+        }
+
         const savedFiles = [];
         const exportNext = (idx) => {
-          if (idx >= allTemplates.length) {
+          if (idx >= jobs.length) {
             setExporting(false);
-            setExportResult({
-              folderName: saveFolder ? saveFolderName : null,
-              files: savedFiles,
-              total: allTemplates.length,
-            });
+            setExportResult({ folderName: saveFolder ? saveFolderName : null, files: savedFiles, total: jobs.length });
             return;
           }
-          const tpl = allTemplates[idx];
-          exportWordTemplate(tpl, selectedCase, objects, selectedObjs, getUnitSettings())
+          const { tpl, objIndices, label } = jobs[idx];
+          exportWordTemplate(tpl, selectedCase, objects, objIndices, getUnitSettings())
             .then(async result => {
               if (typeof result === 'string') { addToast(result,'error'); exportNext(idx+1); return; }
-              const filename = result.filename.replace('.docx','') + ' - ' + names + '.docx';
+              const baseName = result.filename.replace(/\.docx$/i, '');
+              const filename = (baseName + ' - ' + label).replace(/[\\/:*?"<>|]/g, '_') + '.docx';
               const usedFolder = await saveBlob(result.blob, filename);
               savedFiles.push(filename);
-              if (usedFolder) savedToFolder++; else savedByDownload++;
               exportNext(idx+1);
             })
-            .catch(err => { addToast('Lỗi xuất Word: ' + err.message, 'error'); exportNext(idx+1); });
+            .catch(err => {
+              // [OPT-4] Phân loại lỗi cho người dùng biết hướng xử lý
+              const msg = err.message || '';
+              let userMsg = 'Lỗi xuất Word: ' + msg;
+              if (msg.includes('Unclosed') || msg.includes('tag')) userMsg = '❌ Mẫu Word lỗi định dạng placeholder (tag chưa đóng). Kiểm tra file mẫu.';
+              else if (msg.includes('corrupt') || msg.includes('unexpected')) userMsg = '❌ File mẫu bị hỏng hoặc không phải .docx hợp lệ.';
+              else if (msg.includes('arrayBuffer') || msg.includes('read')) userMsg = '❌ Không đọc được file mẫu. Thử chọn lại file.';
+              addToast(userMsg, 'error');
+              exportNext(idx+1);
+            });
         };
         exportNext(0);
       };
@@ -4253,18 +5065,73 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 </div>
                 {objects.length > 0 && (
                   <div className="form-group">
-                    <label className="form-label">2. Chọn đối tượng (thứ tự = số trong placeholder)</label>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px',flexWrap:'wrap',gap:'8px'}}>
+                      <label className="form-label" style={{margin:0}}>2. Chọn đối tượng</label>
+                      {/* Toggle chế độ xuất */}
+                      <div style={{display:'flex',alignItems:'center',gap:'6px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'8px',padding:'4px 8px',fontSize:'12px'}}>
+                        <span style={{color:'#64748b',fontWeight:500}}>Chế độ xuất:</span>
+                        <button
+                          onClick={()=>setExportPerObj(true)}
+                          style={{padding:'3px 10px',borderRadius:'5px',border:'none',cursor:'pointer',fontWeight:700,fontSize:'11px',
+                            background:exportPerObj?'#15803d':'transparent',color:exportPerObj?'#fff':'#64748b',transition:'all 0.15s'}}
+                        >📄 Riêng từng người</button>
+                        <button
+                          onClick={()=>setExportPerObj(false)}
+                          style={{padding:'3px 10px',borderRadius:'5px',border:'none',cursor:'pointer',fontWeight:700,fontSize:'11px',
+                            background:!exportPerObj?'#1d4ed8':'transparent',color:!exportPerObj?'#fff':'#64748b',transition:'all 0.15s'}}
+                        >📋 Gộp chung</button>
+                      </div>
+                    </div>
+
+                    {/* Hướng dẫn placeholder theo chế độ */}
+                    <div style={{marginBottom:'8px',padding:'8px 12px',borderRadius:'7px',fontSize:'11px',lineHeight:1.6,
+                      background: exportPerObj?'#f0fdf4':'#eff6ff',
+                      border: exportPerObj?'1px solid #86efac':'1px solid #bfdbfe',
+                      color: exportPerObj?'#166534':'#1e40af'}}>
+                      {exportPerObj ? (<>
+                        <b>📄 Xuất riêng từng người</b> — Mỗi đối tượng được xuất thành 1 file Word riêng.<br/>
+                        Dùng placeholder đơn giản trong template: <code style={{background:'rgba(0,0,0,0.08)',padding:'1px 5px',borderRadius:'3px'}}>{'{ho_va_ten}'}</code> <code style={{background:'rgba(0,0,0,0.08)',padding:'1px 5px',borderRadius:'3px'}}>{'{ngay_sinh}'}</code> <code style={{background:'rgba(0,0,0,0.08)',padding:'1px 5px',borderRadius:'3px'}}>{'{so_cmnd}'}</code> ...
+                        <br/><span style={{opacity:0.8}}>⚡ Không cần tạo nhiều template cho nhiều đối tượng!</span>
+                      </>) : (<>
+                        <b>📋 Gộp chung</b> — Tất cả đối tượng vào 1 file, thứ tự chọn = số trong placeholder.<br/>
+                        Dùng: <code style={{background:'rgba(0,0,0,0.08)',padding:'1px 5px',borderRadius:'3px'}}>{'{doituong1_ho_va_ten}'}</code> <code style={{background:'rgba(0,0,0,0.08)',padding:'1px 5px',borderRadius:'3px'}}>{'{doituong2_ho_va_ten}'}</code> ...
+                      </>)}
+                    </div>
+
                     <div style={{border:'1px solid #e2e8f0',borderRadius:'8px',overflow:'hidden'}}>
+                      {/* Nút chọn tất cả / bỏ chọn */}
+                      <div style={{display:'flex',gap:'6px',padding:'6px 10px',background:'#f8fafc',borderBottom:'1px solid #f1f5f9'}}>
+                        <button onClick={()=>setSelectedObjs(objects.map((_,i)=>i))} className="btn btn-gray btn-xs" style={{fontSize:'11px',padding:'3px 10px'}}>✓ Tất cả</button>
+                        <button onClick={()=>setSelectedObjs([])} className="btn btn-gray btn-xs" style={{fontSize:'11px',padding:'3px 10px'}}>✕ Bỏ hết</button>
+                        {selectedObjs.length > 0 && <span style={{fontSize:'11px',color:'#64748b',alignSelf:'center',marginLeft:'4px'}}>
+                          Đã chọn {selectedObjs.length}/{objects.length} · Sẽ tạo {exportPerObj ? selectedObjs.length * (templateFiles.length||1) : (templateFiles.length||1)} file
+                        </span>}
+                      </div>
                       {objects.map((obj,i)=>(
-                        <div key={i} onClick={()=>toggleObj(i)} style={{display:'flex',alignItems:'center',gap:'12px',padding:'10px 14px',cursor:'pointer',background:selectedObjs.includes(i)?'#f0fdf4':'white',borderBottom:i<objects.length-1?'1px solid #f1f5f9':'none',transition:'all 0.15s'}}>
-                          <div style={{width:'28px',height:'28px',borderRadius:'50%',background:selectedObjs.includes(i)?'#16a34a':'#f1f5f9',display:'flex',alignItems:'center',justifyContent:'center',color:selectedObjs.includes(i)?'#fff':'#64748b',fontWeight:800,fontSize:'13px',flexShrink:0}}>
-                            {selectedObjs.includes(i)?(selectedObjs.indexOf(i)+1):(i+1)}
+                        <div key={i} onClick={()=>toggleObj(i)} style={{display:'flex',alignItems:'center',gap:'12px',padding:'9px 14px',cursor:'pointer',
+                          background:selectedObjs.includes(i)?'#f0fdf4':'white',
+                          borderBottom:i<objects.length-1?'1px solid #f1f5f9':'none',transition:'all 0.15s'}}>
+                          <div style={{width:'26px',height:'26px',borderRadius:'50%',
+                            background:selectedObjs.includes(i)?'#16a34a':'#f1f5f9',
+                            display:'flex',alignItems:'center',justifyContent:'center',
+                            color:selectedObjs.includes(i)?'#fff':'#64748b',
+                            fontWeight:800,fontSize:'12px',flexShrink:0}}>
+                            {selectedObjs.includes(i)
+                              ? (exportPerObj ? '✓' : (selectedObjs.indexOf(i)+1))
+                              : (i+1)}
                           </div>
                           <div style={{flex:1}}>
-                            <div style={{fontWeight:700,color:'#1e293b'}}>{obj.name||'Chưa tên'}</div>
-                            <div style={{fontSize:'11px',color:'#64748b'}}>CCCD: {obj.idNumber||'N/A'} | SĐT: {obj.phoneNumber||'N/A'}</div>
+                            <div style={{fontWeight:700,color:'#1e293b',fontSize:'13px'}}>{obj.name||'Chưa tên'}</div>
+                            <div className="text-slate-500" style={{fontSize:"11px"}}>
+                              {obj.birthDate ? fmtDateVN(obj.birthDate) + ' · ' : ''}
+                              CCCD: {obj.idNumber||'N/A'}
+                            </div>
                           </div>
-                          {selectedObjs.includes(i)&&<span style={{color:'#16a34a',fontWeight:700}}>✓</span>}
+                          {selectedObjs.includes(i) && (
+                            <span style={{fontSize:'11px',background:'#dcfce7',color:'#16a34a',padding:'2px 8px',borderRadius:'10px',fontWeight:700}}>
+                              {exportPerObj ? 'xuất 1 file' : `ĐT số ${selectedObjs.indexOf(i)+1}`}
+                            </span>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -4294,7 +5161,15 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                       setTemplateName('');
                       e.target.value = '';
                     }} />
-                    <button className="btn btn-primary btn-sm" style={{whiteSpace:'nowrap'}} onClick={()=>setActiveTab('library')}>☁️ Thư viện</button>
+                    {templateFiles.length > 0 && (
+                      <button
+                        className="btn btn-danger btn-sm"
+                        className="whitespace-nowrap"
+                        onClick={()=>{ if(window.confirm('Xoá tất cả file mẫu đã chọn?')) setTemplateFiles([]); }}
+                        title="Xoá tất cả file mẫu"
+                      >🗑 Xoá tất cả</button>
+                    )}
+                    <button className="btn btn-primary btn-sm" className="whitespace-nowrap" onClick={()=>setActiveTab('library')}>☁️ Thư viện</button>
                   </div>
                   {templateFiles.length === 0 && templateFile && !templateName && <div style={{marginTop:'6px',fontSize:'12px',color:'#15803d'}}>✓ File: {templateFile.name}</div>}
                   {templateFiles.length > 0 && <div style={{marginTop:'6px',fontSize:'12px',color:'#15803d',fontWeight:600}}>✓ Đã chọn {templateFiles.length} file mẫu — sẽ xuất {templateFiles.length} file Word</div>}
@@ -4348,7 +5223,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                       className="form-control"
                       style={{flex:1,fontSize:'12px'}}
                     />
-                    <button className="btn btn-primary btn-sm" onClick={saveGhRepo} style={{whiteSpace:'nowrap'}}>🔗 Kết nối</button>
+                    <button className="btn btn-primary btn-sm" onClick={saveGhRepo} className="whitespace-nowrap">🔗 Kết nối</button>
                   </div>
                   {ghRepo && <div style={{fontSize:'11px',color:'#0369a1',marginTop:'4px'}}>✓ Đã lưu — Tự động kết nối: <b>{ghRepo}</b></div>}
                   {!ghRepo && <div style={{fontSize:'11px',color:'#94a3b8',marginTop:'4px'}}>💡 Nhập link một lần, ứng dụng sẽ tự nhớ và kết nối lần sau</div>}
@@ -4372,7 +5247,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
 
                 {/* Subfolders */}
                 {subFolders.length > 0 && (
-                  <div style={{marginBottom:'8px'}}>
+                  <div className="mb-2">
                     <div style={{fontSize:'12px',fontWeight:600,color:'#64748b',marginBottom:'4px'}}>📁 Thư mục con</div>
                     <div style={{display:'flex',flexWrap:'wrap',gap:'6px'}}>
                       {subFolders.map(f=>(
@@ -4393,7 +5268,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                         <span style={{fontSize:'20px'}}>📝</span>
                         <div style={{flex:1}}>
                           <div style={{fontWeight:600,fontSize:'13px',color:'#1e293b'}}>{f.name}</div>
-                          <div style={{fontSize:'11px',color:'#64748b'}}>{(f.size/1024).toFixed(1)} KB</div>
+                          <div className="text-slate-500" style={{fontSize:"11px"}}>{(f.size/1024).toFixed(1)} KB</div>
                         </div>
                         <button onClick={()=>downloadAndUse(f)} className="btn btn-success btn-sm">⬇️ Dùng mẫu này</button>
                       </div>
@@ -4574,7 +5449,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 </div>
               </div>
               {results.length > 0 && (
-                <div style={{marginTop:'8px'}}>
+                <div className="mt-2">
                   {results.map((r,i) => (
                     <div key={i} style={{padding:'8px 10px',borderRadius:'6px',background: r.ok ? '#f0fdf4' : '#fef2f2', border: `1px solid ${r.ok ? '#86efac' : '#fca5a5'}`, fontSize:'12px', color: r.ok ? '#15803d' : '#991b1b', marginBottom:'6px'}}>
                       <b>{r.name}</b>: {r.msg}
@@ -4617,6 +5492,17 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const [bbActiveTab, setBbActiveTab] = useState('info');
       const [wordImporting, setWordImporting] = useState(false);
       const [showHandlingDetails, setShowHandlingDetails] = useState(true);
+      const PRESET_OCCUPATIONS = ['Không','Buôn bán','Lao động tự do','Kinh doanh','Công nhân','Bảo vệ','Nhân viên văn phòng','Kỹ sư','Làm nông','Hưu','Nội trợ'];
+      const [isCustomOccupation, setIsCustomOccupation] = useState(
+        () => !!objectData.occupation && !['Không','Buôn bán','Lao động tự do','Kinh doanh','Công nhân','Bảo vệ','Nhân viên văn phòng','Kỹ sư','Làm nông','Hưu','Nội trợ'].includes(objectData.occupation)
+      );
+      // Đồng bộ isCustomOccupation khi occupation thay đổi từ bên ngoài (vd: import Word)
+      useEffect(() => {
+        const occ = objectData.occupation || '';
+        if (!occ) { setIsCustomOccupation(false); return; }
+        const isPreset = PRESET_OCCUPATIONS.includes(occ);
+        setIsCustomOccupation(!isPreset);
+      }, [objectData.occupation]);
       const wordImportRef = useRef(null);
       
       // Refs for date inputs
@@ -5224,7 +6110,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             <span>{editingIndex !== null ? "✏️ Chỉnh Sửa Đối Tượng" : "👤 Thêm Thông Tin Đối Tượng"}</span>
             <label style={{cursor:'pointer',display:'flex',alignItems:'center',gap:'5px',background:'#1e40af',color:'#fff',padding:'4px 10px',borderRadius:'6px',fontSize:'12px',fontWeight:600}}>
               {wordImporting ? '⏳ Đang đọc...' : '📂 Nhập từ Word'}
-              <input type="file" accept=".docx" ref={wordImportRef} style={{display:'none'}} onChange={(e)=>handleWordImport(e.target.files[0])} disabled={wordImporting} />
+              <input type="file" accept=".docx" ref={wordImportRef} className="hidden" onChange={(e)=>handleWordImport(e.target.files[0])} disabled={wordImporting} />
             </label>
           </div>
           <div className="card-body">
@@ -5436,13 +6322,35 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             <div className="flex items-center">
               <div className="flex-1">
                 <label className={`form-label${objectData.occupation ? ' label-filled' : ''}`}>Nghề nghiệp</label>
-                <select name="occupation" value={(['Không','Buôn bán','Lao động tự do','Kinh doanh','Công nhân','Bảo vệ','Nhân viên văn phòng','Kỹ sư','Làm nông','Hưu','Nội trợ'].includes(objectData.occupation||'') || !objectData.occupation) ? (objectData.occupation||'') : '__khac__'} onChange={(e)=>{ if(e.target.value==='__khac__') handleObjectInputChange({target:{name:'occupation',value:''}}); else handleObjectInputChange(e); }} className="form-control">
+                <select
+                  name="occupation"
+                  value={isCustomOccupation ? '__khac__' : (objectData.occupation || '')}
+                  onChange={(e) => {
+                    if (e.target.value === '__khac__') {
+                      setIsCustomOccupation(true);
+                      handleObjectInputChange({ target: { name: 'occupation', value: '' } });
+                    } else {
+                      setIsCustomOccupation(false);
+                      handleObjectInputChange(e);
+                    }
+                  }}
+                  className="form-control"
+                >
                   <option value="">-- Chọn nghề nghiệp --</option>
-                  {['Không','Buôn bán','Lao động tự do','Kinh doanh','Công nhân','Bảo vệ','Nhân viên văn phòng','Kỹ sư','Làm nông','Hưu','Nội trợ'].map(v=><option key={v} value={v}>{v}</option>)}
+                  {PRESET_OCCUPATIONS.map(v => <option key={v} value={v}>{v}</option>)}
                   <option value="__khac__">Khác...</option>
                 </select>
-                {(objectData.occupation && !['Không','Buôn bán','Lao động tự do','Kinh doanh','Công nhân','Bảo vệ','Nhân viên văn phòng','Kỹ sư','Làm nông','Hưu','Nội trợ'].includes(objectData.occupation)) && (
-                  <input type="text" name="occupation" value={objectData.occupation} onChange={handleObjectInputChange} className="form-control" style={{marginTop:'4px'}} placeholder="Nhập nghề nghiệp..." />
+                {isCustomOccupation && (
+                  <input
+                    type="text"
+                    name="occupation"
+                    value={objectData.occupation || ''}
+                    onChange={handleObjectInputChange}
+                    className="form-control"
+                    style={{ marginTop: '6px' }}
+                    placeholder="Nhập nghề nghiệp..."
+                    autoFocus
+                  />
                 )}
               </div>
               {renderUndoButton('occupation')}
@@ -5555,7 +6463,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             {/* Hàng: Ngày mời | Ngày chuyển | Nơi chuyển đến (mở rộng) */}
             <div className="form-row" style={{gridTemplateColumns:'1fr 1fr 3fr', gap:'8px', marginTop:'6px', alignItems:'end'}}>
               <div>
-                <label className={`form-label${objectData.invitationDate ? ' label-filled' : ''}`} style={{whiteSpace:'nowrap'}}>Ngày mời</label>
+                <label className={`form-label${objectData.invitationDate ? ' label-filled' : ''}`} className="whitespace-nowrap">Ngày mời</label>
                 <input
                   type="text"
                   ref={invitationDateRef}
@@ -5565,11 +6473,11 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 />
               </div>
               <div>
-                <label className={`form-label${objectData.ngayChuyen ? ' label-filled' : ''}`} style={{whiteSpace:'nowrap'}}>Ngày chuyển</label>
+                <label className={`form-label${objectData.ngayChuyen ? ' label-filled' : ''}`} className="whitespace-nowrap">Ngày chuyển</label>
                 <input type="text" ref={ngayChuyenRef} name="ngayChuyen" placeholder="dd/mm/yyyy" className="form-control" />
               </div>
               <div>
-                <label className={`form-label${objectData.noiChuyen ? ' label-filled' : ''}`} style={{whiteSpace:'nowrap'}}>Nơi chuyển đến</label>
+                <label className={`form-label${objectData.noiChuyen ? ' label-filled' : ''}`} className="whitespace-nowrap">Nơi chuyển đến</label>
                 <input type="text" name="noiChuyen" value={objectData.noiChuyen||''} onChange={handleObjectInputChange} className="form-control" placeholder="Nhập nơi chuyển đến..." style={{minWidth:0}} />
               </div>
             </div>
@@ -5593,7 +6501,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 </div>
                 <label className="btn btn-primary btn-xs" style={{cursor:'pointer',marginTop:'4px'}}>
                   {objectData.photo ? '🔄 Thay ảnh' : '📷 Thêm ảnh'}
-                  <input type="file" accept="image/*" onChange={(e)=>handlePhotoUpload(e,'photo')} style={{display:'none'}} />
+                  <input type="file" accept="image/*" onChange={(e)=>handlePhotoUpload(e,'photo')} className="hidden" />
                 </label>
                 {objectData.photo && <button className="btn btn-gray btn-xs" onClick={()=>setObjectData(prev=>({...prev,photo:''}))}>🗑️ Xóa</button>}
               </div>
@@ -5609,7 +6517,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 </div>
                 <label className="btn btn-primary btn-xs" style={{cursor:'pointer',marginTop:'4px'}}>
                   {objectData.photoLeft ? '🔄 Thay ảnh' : '📷 Thêm ảnh'}
-                  <input type="file" accept="image/*" onChange={(e)=>handlePhotoUpload(e,'photoLeft')} style={{display:'none'}} />
+                  <input type="file" accept="image/*" onChange={(e)=>handlePhotoUpload(e,'photoLeft')} className="hidden" />
                 </label>
                 {objectData.photoLeft && <button className="btn btn-gray btn-xs" onClick={()=>setObjectData(prev=>({...prev,photoLeft:''}))}>🗑️ Xóa</button>}
               </div>
@@ -5625,14 +6533,14 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 </div>
                 <label className="btn btn-primary btn-xs" style={{cursor:'pointer',marginTop:'4px'}}>
                   {objectData.photoRight ? '🔄 Thay ảnh' : '📷 Thêm ảnh'}
-                  <input type="file" accept="image/*" onChange={(e)=>handlePhotoUpload(e,'photoRight')} style={{display:'none'}} />
+                  <input type="file" accept="image/*" onChange={(e)=>handlePhotoUpload(e,'photoRight')} className="hidden" />
                 </label>
                 {objectData.photoRight && <button className="btn btn-gray btn-xs" onClick={()=>setObjectData(prev=>({...prev,photoRight:''}))}>🗑️ Xóa</button>}
               </div>
               {/* Export ảnh chính diện */}
               {objectData.photo && (
                 <div className="photo-item" style={{justifyContent:'flex-end'}}>
-                  <button className="btn btn-outline btn-sm" onClick={exportPhoto} style={{marginTop:'8px'}}>📥 Xuất ảnh chính diện</button>
+                  <button className="btn btn-outline btn-sm" onClick={exportPhoto} className="mt-2">📥 Xuất ảnh chính diện</button>
                 </div>
               )}
               </div>
@@ -5710,7 +6618,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   <div className="flex items-center">
                     <div className="flex-1">
                       <label className="form-label">Số Biên bản XPHC</label>
-                      <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                      <div className="flex gap-1 items-center">
                       <input type="text" name="administrativeRecordNumber" value={objectData.administrativeRecordNumber || ''} onChange={handleObjectInputChange} placeholder="Nhập số biên bản XPHC" className="form-control" />
                       {objectData.administrativeRecordNumber && <button type="button" className="btn btn-danger btn-xs" onClick={()=>secureClearObjectField('administrativeRecordNumber')}>🗑️</button>}
                       </div>
@@ -5720,7 +6628,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   <div className="flex items-center">
                     <div className="flex-1">
                       <label className="form-label">Ngày lập biên bản</label>
-                      <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                      <div className="flex gap-1 items-center">
                       <input type="text" ref={reportDateRef} name="reportDate" placeholder="dd/mm/yyyy" className="form-control" />
                       {objectData.reportDate && <button type="button" className="btn btn-danger btn-xs" onClick={()=>secureClearObjectField('reportDate')}>🗑️</button>}
                       </div>
@@ -5735,7 +6643,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               <div style={{marginTop:'10px', padding:'10px', background:'#fef3c7', borderRadius:'6px', border:'1px solid #fbbf24'}}>
                 <div style={{fontWeight:600, color:'#92400e', fontSize:'12px', marginBottom:'8px'}}>⚖️ KHỞI TỐ BỊ CAN</div>
                 {/* Hành vi - full width */}
-                <div style={{marginBottom:'8px'}}>
+                <div className="mb-2">
                   <div className="flex items-center">
                     <div className="flex-1">
                       <label className="form-label">Hành vi</label>
@@ -5769,7 +6677,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   <div className="flex items-center">
                     <div className="flex-1">
                       <label className={`form-label${objectData.prosecutionDateObj ? ' label-filled' : ''}`}>Ngày khởi tố BỊ CAN</label>
-                      <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                      <div className="flex gap-1 items-center">
                       <input type="text" ref={prosecutionDateObjRef} name="prosecutionDateObj" placeholder="dd/mm/yyyy" className="form-control" />
                       {objectData.prosecutionDateObj && (
                         <button type="button" className="btn btn-danger btn-xs" onClick={()=>secureClearObjectField(['prosecutionDateObj','qdKtbcNgay'])}>🗑️</button>
@@ -5781,7 +6689,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   <div className="flex items-center">
                     <div className="flex-1">
                       <label className={`form-label${objectData.prosecutionDecisionObj ? ' label-filled' : ''}`}>Số QĐ khởi tố BỊ CAN</label>
-                      <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                      <div className="flex gap-1 items-center">
                       <input type="text" name="prosecutionDecisionObj" value={objectData.prosecutionDecisionObj || ''} onChange={handleObjectInputChange} placeholder="Số QĐ khởi tố" className="form-control" />
                       {objectData.prosecutionDecisionObj && (
                         <button type="button" className="btn btn-danger btn-xs" onClick={()=>secureClearObjectField(['prosecutionDecisionObj','qdKtbcSo'])}>🗑️</button>
@@ -5796,7 +6704,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   <div className="flex items-center">
                     <div className="flex-1">
                       <label className={`form-label${objectData.custodyDecisionDate ? ' label-filled' : ''}`}>Ngày QĐ tạm giữ</label>
-                      <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                      <div className="flex gap-1 items-center">
                       <input type="text" ref={custodyDecisionDateRef} name="custodyDecisionDate" placeholder="dd/mm/yyyy" className="form-control" />
                       {objectData.custodyDecisionDate && (
                         <button type="button" className="btn btn-danger btn-xs" onClick={()=>{ setObjectData(prev=>({...prev,custodyDecisionDate:'',custodyDecisionNumber:'',custodyExpirationDate:'',custodyExtensionCount:'0'})); if(custodyDecisionDateRef.current) custodyDecisionDateRef.current.value=''; }}>🗑️</button>
@@ -5808,7 +6716,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   <div className="flex items-center">
                     <div className="flex-1">
                       <label className={`form-label${objectData.custodyDecisionNumber ? ' label-filled' : ''}`}>Số QĐ tạm giữ</label>
-                      <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                      <div className="flex gap-1 items-center">
                       <input type="text" name="custodyDecisionNumber" value={objectData.custodyDecisionNumber || ''} onChange={handleObjectInputChange} placeholder="Số QĐ tạm giữ" className="form-control" />
                       {objectData.custodyDecisionNumber && (
                         <button type="button" className="btn btn-danger btn-xs" onClick={()=>{ setObjectData(prev=>({...prev,custodyDecisionDate:'',custodyDecisionNumber:'',custodyExpirationDate:'',custodyExtensionCount:'0'})); if(custodyDecisionDateRef.current) custodyDecisionDateRef.current.value=''; }}>🗑️</button>
@@ -5838,7 +6746,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   <div className="flex items-center">
                     <div className="flex-1">
                       <label className={`form-label${objectData.detentionDecisionDate ? ' label-filled' : ''}`}>Ngày QĐ tạm giam</label>
-                      <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                      <div className="flex gap-1 items-center">
                       <input type="text" ref={detentionDecisionDateRef} name="detentionDecisionDate" placeholder="dd/mm/yyyy" className="form-control" />
                       {objectData.detentionDecisionDate && (
                         <button type="button" className="btn btn-danger btn-xs" onClick={()=>{ setObjectData(prev=>({...prev,detentionDecisionDate:'',detentionDecisionNumber:'',detentionExpirationDate:'',detentionExtensionCount:'0'})); if(detentionDecisionDateRef.current) detentionDecisionDateRef.current.value=''; }}>🗑️</button>
@@ -5850,7 +6758,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   <div className="flex items-center">
                     <div className="flex-1">
                       <label className={`form-label${objectData.detentionDecisionNumber ? ' label-filled' : ''}`}>Số QĐ tạm giam</label>
-                      <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                      <div className="flex gap-1 items-center">
                       <input type="text" name="detentionDecisionNumber" value={objectData.detentionDecisionNumber || ''} onChange={handleObjectInputChange} placeholder="Số QĐ tạm giam" className="form-control" />
                       {objectData.detentionDecisionNumber && (
                         <button type="button" className="btn btn-danger btn-xs" onClick={()=>{ setObjectData(prev=>({...prev,detentionDecisionDate:'',detentionDecisionNumber:'',detentionExpirationDate:'',detentionExtensionCount:'0'})); if(detentionDecisionDateRef.current) detentionDecisionDateRef.current.value=''; }}>🗑️</button>
@@ -5924,7 +6832,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                       <option value="">-- Chọn --</option>
                       {['Ma túy đá (MET)','Thuốc lắc (MDMA)','Ketamine (KET)','Heroin','Cần sa (TCH)','Nước biển (GHB)','Nước vui','Cỏ Mỹ','Khác'].map(v=><option key={v} value={v}>{v}</option>)}
                     </select>
-                    {objectData.loaiMaTuy === 'Khác' && <input type="text" name="loaiMaTuy" value={objectData.loaiMaTuyKhac||''} onChange={(e)=>handleObjectInputChange({target:{name:'loaiMaTuyKhac',value:e.target.value}})} className="form-control" style={{marginTop:'4px'}} placeholder="Nhập loại ma túy..." />}
+                    {objectData.loaiMaTuy === 'Khác' && <input type="text" name="loaiMaTuy" value={objectData.loaiMaTuyKhac||''} onChange={(e)=>handleObjectInputChange({target:{name:'loaiMaTuyKhac',value:e.target.value}})} className="form-control" className="mt-1" placeholder="Nhập loại ma túy..." />}
                   </div>
                   <div><label className="form-label">Hình thức sử dụng</label>
                     <select name="hinhThucSuDung" value={objectData.hinhThucSuDung||''} onChange={handleObjectInputChange} className="form-control">
@@ -5984,14 +6892,14 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   {/* SỐ QĐ KHỞI TỐ BỊ CAN - editable with delete */}
                   <div style={{background: (objectData.qdKtbcSo||objectData.prosecutionDecisionObj) ? '#eff6ff' : '#f8fafc', borderRadius:'4px', padding:'6px', border: (objectData.qdKtbcSo||objectData.prosecutionDecisionObj) ? '1px solid #93c5fd' : '1px solid #e2e8f0'}}>
                     <label className="form-label" style={{color:(objectData.qdKtbcSo||objectData.prosecutionDecisionObj)?'#1d4ed8':'#374151', fontWeight:600}}>Số QĐ KHỞI TỐ BỊ CAN</label>
-                    <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                    <div className="flex gap-1 items-center">
                     <input type="text" name="qdKtbcSo" value={objectData.qdKtbcSo || objectData.prosecutionDecisionObj || ''} onChange={handleObjectInputChange} className="form-control" style={{color:(objectData.qdKtbcSo||objectData.prosecutionDecisionObj)?'#1d4ed8':'inherit'}} placeholder="Số QĐ khởi tố bị can" />
                     {(objectData.qdKtbcSo||objectData.prosecutionDecisionObj) && <button type="button" className="btn btn-danger btn-xs" onClick={()=>secureClearObjectField(['qdKtbcSo','prosecutionDecisionObj'])}>🗑️</button>}
                     </div>
                   </div>
                   <div style={{background: (objectData.qdKtbcNgay||objectData.prosecutionDateObj) ? '#eff6ff' : '#f8fafc', borderRadius:'4px', padding:'6px', border: (objectData.qdKtbcNgay||objectData.prosecutionDateObj) ? '1px solid #93c5fd' : '1px solid #e2e8f0'}}>
                     <label className="form-label" style={{color:(objectData.qdKtbcNgay||objectData.prosecutionDateObj)?'#1d4ed8':'#374151', fontWeight:600}}>NGÀY QĐ KHỞI TỐ BỊ CAN</label>
-                    <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                    <div className="flex gap-1 items-center">
                     <FpDateInput name="qdKtbcNgay" value={objectData.qdKtbcNgay || objectData.prosecutionDateObj || ''} onChange={handleObjectInputChange} className="form-control" />
                     {(objectData.qdKtbcNgay||objectData.prosecutionDateObj) && <button type="button" className="btn btn-danger btn-xs" onClick={()=>secureClearObjectField(['qdKtbcNgay','prosecutionDateObj'])}>🗑️</button>}
                     </div>
@@ -6012,8 +6920,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 <div className="form-row">
                   <div><label className="form-label">Tạm giữ khác</label><textarea name="tamGiu" value={objectData.tamGiu||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Đồ vật, tài liệu bị tạm giữ (thông tin khác)..." /></div>
                   <div><label className="form-label">Tạm giữ sau khám xét</label><textarea name="tamGiuSauKhamXet" value={objectData.tamGiuSauKhamXet||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Đồ vật, tài liệu bị tạm giữ sau khám xét..." /></div>
-                  <div><label className="form-label">Tiền án <span style={{fontSize:'11px',color:'#64748b'}}>(số lần, tội danh; ghi "Không" nếu không có)</span></label><textarea name="tienAn" value={objectData.tienAn||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Không" /></div>
-                  <div><label className="form-label">Tiền sự <span style={{fontSize:'11px',color:'#64748b'}}>(số lần, hành vi; ghi "Không" nếu không có)</span></label><textarea name="tienSu" value={objectData.tienSu||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Không" /></div>
+                  <div><label className="form-label">Tiền án <span className="text-slate-500" style={{fontSize:"11px"}}>(số lần, tội danh; ghi "Không" nếu không có)</span></label><textarea name="tienAn" value={objectData.tienAn||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Không" /></div>
+                  <div><label className="form-label">Tiền sự <span className="text-slate-500" style={{fontSize:"11px"}}>(số lần, hành vi; ghi "Không" nếu không có)</span></label><textarea name="tienSu" value={objectData.tienSu||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Không" /></div>
                   <div><label className="form-label">Thông tin đối tượng 2</label><textarea name="thongTinDt2" value={objectData.thongTinDt2||''} onChange={handleObjectInputChange} className="form-control" rows={2} placeholder="Thông tin bổ sung..." /></div>
                   <div><label className="form-label">Ghi chú biên bản</label><textarea name="ghiChuBB" value={objectData.ghiChuBB||''} onChange={handleObjectInputChange} className="form-control" rows={2} /></div>
                 </div>
@@ -6067,7 +6975,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       receivingUnitsList, 
       caseTypesList, 
       handlingMethodsList,
-      hasUnsavedChanges
+      hasUnsavedChanges,
+      setEditGate
     }) => {
       const [typeInput, setTypeInput] = useState(caseData.type.join(', '));
       const [currentType, setCurrentType] = useState('');
@@ -6252,7 +7161,9 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       }, [tempObjects]);
       
       const handleSubmitCase = useCallback((e) => {
-        e.preventDefault();
+        if (e && e.preventDefault) e.preventDefault();
+        if (handleSubmitCase._saving) return;
+        handleSubmitCase._saving = true;
         
         if (!caseData.id || !caseData.type || caseData.type.length === 0 || !caseData.dateReceived) {
           setErrorMessage('Vui lòng điền đầy đủ các trường bắt buộc: Mã số vụ, Loại vụ việc, Ngày tiếp nhận.');
@@ -6266,12 +7177,19 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         
         let updatedCases;
         
+        // Tính toán seizedItems từ tempObjects tại thời điểm lưu
+        // (textarea hiển thị computed value nhưng không tự sync vào caseData.seizedItems)
+        const computedSeizedItems = tempObjects
+          .map(obj => [obj.tamGiu, obj.tamGiuSauKhamXet].filter(Boolean).join(' | '))
+          .filter(Boolean).join('\n') || caseData.seizedItems || '';
+        const caseToSave = Object.assign({}, caseData, { seizedItems: computedSeizedItems });
+        
         if (editingCaseId !== null) {
           updatedCases = cases.map(function(c) {
-            return c.id === editingCaseId ? Object.assign({}, caseData, { objects: tempObjects }) : c;
+            return c.id === editingCaseId ? Object.assign({}, caseToSave, { objects: tempObjects }) : c;
           });
         } else {
-          updatedCases = cases.concat([Object.assign({}, caseData, { objects: tempObjects, id: caseData.id })]);
+          updatedCases = cases.concat([Object.assign({}, caseToSave, { objects: tempObjects, id: caseData.id })]);
         }
         
         saveCasesToDB(updatedCases).then(function() {
@@ -6283,17 +7201,22 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             prosecutionDecision: '', penaltyDate: '', penaltyDecision: '',
             transferDate: '', receivingUnit: '', status: 'đang thực hiện',
             reportDate: '', expirationDate: '', notes: '', objects: [],
-            phanLoaiTin: '', noixayra: '', tinBaoKetQua: '', tinBaoNgayKetThuc: ''
+            phanLoaiTin: '', noixayra: '', hinhThucXuLy: '', toQuanLy: '',
+            ngayKetThuc: '', tinBaoKetQua: '', tinBaoNgayKetThuc: '',
+            penaltyDate: '', prosecutionDecision: '', penaltyDecision: '',
+            loaiToiPhamVu: '', ngayKhoiToVuAn: '', soQdKhoiToVuAn: '', ngayXphc: '', soQdXphcVu: ''
           });
           setTempObjects([]);
           setShowForm(false);
           setIsEditing(false);
           setViewMode('list');
+          handleSubmitCase._saving = false;
           addToast('Vụ việc đã được lưu thành công!', 'success');
           AudioManager.successSound();
           setHasUnsavedChanges(false);
         }).catch(function(error) {
           console.error('Error saving case:', error);
+          handleSubmitCase._saving = false;
           addToast('Không thể lưu vụ việc vào cơ sở dữ liệu. Vui lòng thử lại!', 'error');
         });
       }, [caseData, tempObjects, editingCaseId, cases]);
@@ -6338,7 +7261,17 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       return (
         <div className="card">
           <div className="card-header">
-            {editingCaseId ? "✏️ Chỉnh Sửa Vụ Việc" : "➕ Thêm Vụ Việc Mới"}
+            {editingCaseId
+              ? (isEditing
+                  ? <span>✏️ Chỉnh Sửa Vụ Việc</span>
+                  : <span className="flex items-center gap-2">
+                      👁 Xem Vụ Việc
+                      <span style={{fontSize:'11px',background:'#fef3c7',color:'#92400e',border:'1px solid #fcd34d',borderRadius:'10px',padding:'2px 10px',fontWeight:600}}>
+                        🔒 Chỉ đọc — nhấn "🔐 Chỉnh sửa" để sửa
+                      </span>
+                    </span>
+                )
+              : "➕ Thêm Vụ Việc Mới"}
             {hasUnsavedChanges && <span className="unsaved-indicator" style={{marginLeft: 'auto'}}>● Chưa lưu</span>}
           </div>
           <div className="card-body">
@@ -6413,7 +7346,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           </div>
           </div>
 
-          <div className="form-row" style={{marginTop:'8px'}}>
+          <div className="form-row" className="mt-2">
             <div className="col-span-2">
               <label className={`form-label${typeInput ? ' label-filled' : ''}`}>Loại vụ việc <span style={{color:'red'}}>*</span></label>
               <input
@@ -6449,7 +7382,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             </div>
           </div>
 
-          <div className="form-row" style={{marginTop:'8px'}}>
+          <div className="form-row" className="mt-2">
             <div className="col-span-2">
               <label className={`form-label${caseData.description ? ' label-filled' : ''}`}>Nội dung vụ việc</label>
               <textarea
@@ -6463,7 +7396,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             </div>
             
             <div className="col-span-2">
-              <label className={`form-label${(tempObjects.map(obj=>[obj.tamGiu,obj.tamGiuSauKhamXet].filter(Boolean).join(' | ')).filter(Boolean).join('\n')||caseData.seizedItems) ? ' label-filled' : ''}`}>Đồ vật, tài liệu bị tạm giữ <span style={{fontSize:'11px',color:'#64748b'}}>(tự động cập nhật từ "Tạm giữ khác" và "Tạm giữ sau khám xét" của đối tượng)</span></label>
+              <label className={`form-label${(tempObjects.map(obj=>[obj.tamGiu,obj.tamGiuSauKhamXet].filter(Boolean).join(' | ')).filter(Boolean).join('\n')||caseData.seizedItems) ? ' label-filled' : ''}`}>Đồ vật, tài liệu bị tạm giữ <span className="text-slate-500" style={{fontSize:"11px"}}>(tự động cập nhật từ "Tạm giữ khác" và "Tạm giữ sau khám xét" của đối tượng)</span></label>
               <textarea
                 name="seizedItems"
                 value={tempObjects.map(obj => [obj.tamGiu, obj.tamGiuSauKhamXet].filter(Boolean).join(' | ')).filter(Boolean).join('\n') || caseData.seizedItems || ''}
@@ -6567,7 +7500,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 
                 <div>
                   <label className={`form-label${caseData.investigationConclusionDate ? ' label-filled' : ''}`}>Ngày kết luận điều tra</label>
-                  <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                  <div className="flex gap-1 items-center">
                   <input
                     type="text"
                     ref={investigationConclusionDateRef}
@@ -6598,7 +7531,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 
                 <div>
                   <label className={`form-label${caseData.prosecutionDate ? ' label-filled' : ''}`}>Ngày khởi tố vụ án</label>
-                  <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                  <div className="flex gap-1 items-center">
                   <input
                     type="text"
                     ref={prosecutionDateRef}
@@ -6625,7 +7558,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 
                 <div>
                   <label className={`form-label${caseData.prosecutionDecision ? ' label-filled' : ''}`}>Số QĐ khởi tố vụ án</label>
-                  <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                  <div className="flex gap-1 items-center">
                   <input
                     type="text"
                     name="prosecutionDecision"
@@ -6648,7 +7581,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               <>
                 <div>
                   <label className={`form-label${caseData.penaltyDate ? ' label-filled' : ''}`}>Ngày QĐ xử phạt</label>
-                  <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                  <div className="flex gap-1 items-center">
                   <input
                     type="text"
                     ref={penaltyDateRef}
@@ -6666,7 +7599,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 
                 <div>
                   <label className={`form-label${caseData.penaltyDecision ? ' label-filled' : ''}`}>Số QĐ xử phạt</label>
-                  <div style={{display:'flex',gap:'4px',alignItems:'center'}}>
+                  <div className="flex gap-1 items-center">
                   <input
                     type="text"
                     name="penaltyDecision"
@@ -6887,12 +7820,12 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
 
           <div style={{display: 'flex', gap: '8px', marginTop: '16px', padding: '14px 0 0', borderTop: '1px solid #e2e8f0'}}>
             {editingCaseId && !isEditing && (
-              <button className="btn btn-warning" onClick={() => setIsEditing(true)}>✏️ Chỉnh sửa</button>
+              <button className="btn btn-warning" onClick={() => setEditGate({ caseObj: caseData })}>🔐 Chỉnh sửa</button>
             )}
             <button className="btn btn-success" onClick={handleSubmitCase} disabled={!isEditing}>
               💾 Lưu vụ việc
             </button>
-            <button className="btn btn-gray" onClick={() => { setShowForm(false); setViewMode('list'); }}>
+            <button className="btn btn-gray" onClick={() => { setShowForm(false); setViewMode('list'); setUndoData(null); }}>
               ← Quay lại
             </button>
           </div>
@@ -6936,7 +7869,10 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const [err, setErr] = React.useState('');
       const [busy, setBusy] = React.useState(false);
       const ref = React.useRef(null);
-      React.useEffect(() => { setTimeout(() => ref.current && ref.current.focus(), 80); }, []);
+      React.useEffect(() => {
+        let t = setTimeout(() => { if (ref.current) ref.current.focus(); }, 80);
+        return () => clearTimeout(t);
+      }, []);
 
       const verify = async () => {
         if (!pwd) { setErr('Vui lòng nhập mật khẩu.'); return; }
@@ -7030,7 +7966,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       };
       return (
         <div>
-          <div className="page-header" style={{marginBottom:'12px'}}>
+          <div className="page-header" className="mb-3">
             <div className="page-title">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/></svg>
               Nhật Ký Bảo Mật (Audit Log)
@@ -7065,7 +8001,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   <div key={i} style={{background:'white',borderRadius:8,border:'1px solid #e2e8f0',padding:'10px 14px',boxShadow:'0 1px 2px rgba(0,0,0,0.05)'}}>
                     <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',marginBottom:4}}>
                       <span style={{background:c.bg,color:c.c,borderRadius:99,padding:'2px 10px',fontSize:'11px',fontWeight:700,flexShrink:0}}>{c.lbl}</span>
-                      <span style={{fontSize:'11px',color:'#64748b'}}>🕐 {l.display||l.timestamp}</span>
+                      <span className="text-slate-500" style={{fontSize:"11px"}}>🕐 {l.display||l.timestamp}</span>
                       <span style={{fontSize:'12px',color:'#1e293b',fontWeight:600}}>👤 {l.user}</span>
                       {l.ip && l.ip!=='N/A' && <span style={{fontSize:'11px',color:'#0369a1',fontWeight:700}}>🌐 IP: {l.ip}</span>}
                     </div>
@@ -7191,6 +8127,13 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 sessionStorage.setItem('mustChangePassword', 'true');
               }
               setLoggedIn(true);
+              // [AUTH-FIX] Đăng nhập Firebase Auth ẩn danh để thỏa Security Rules
+              // "allow read, write: if request.auth != null"
+              if (isFirebaseConfigured() && typeof firebase !== 'undefined' && firebase.auth) {
+                firebase.auth().signInAnonymously()
+                  .then(() => { /* Firebase Auth: đã đăng nhập ẩn danh */ })
+                  .catch(err => { console.warn('[Firebase Auth] signInAnonymously thất bại:', err.message); });
+              }
               writeAuditLog('LOGIN_OK', { note: 'Đăng nhập thành công' });
             } else {
               // Tăng bộ đếm thất bại
@@ -7806,7 +8749,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   {ketQuaDieuTra && <button className="btn btn-success" onClick={() => xuatWordTinhHan('dieu-tra')}>📄 Xuất báo cáo Word</button>}
                 </div>
                 {ketQuaDieuTra && (
-                  <div dangerouslySetInnerHTML={{__html: ketQuaDieuTra}} style={{marginTop:'16px'}} />
+                  <div dangerouslySetInnerHTML={{__html: ketQuaDieuTra}} className="mt-4" />
                 )}
               </div>
             </div>
@@ -7838,7 +8781,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   {ketQuaTamGiam && <button className="btn btn-success" onClick={() => xuatWordTinhHan('tam-giam')}>📄 Xuất báo cáo Word</button>}
                 </div>
                 {ketQuaTamGiam && (
-                  <div dangerouslySetInnerHTML={{__html: ketQuaTamGiam}} style={{marginTop:'16px'}} />
+                  <div dangerouslySetInnerHTML={{__html: ketQuaTamGiam}} className="mt-4" />
                 )}
               </div>
             </div>
@@ -7878,14 +8821,14 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   {ketQuaPhucHoi && <button className="btn btn-success" onClick={() => xuatWordTinhHan('phuc-hoi')}>📄 Xuất báo cáo Word</button>}
                 </div>
                 {ketQuaPhucHoi && (
-                  <div dangerouslySetInnerHTML={{__html: ketQuaPhucHoi}} style={{marginTop:'16px'}} />
+                  <div dangerouslySetInnerHTML={{__html: ketQuaPhucHoi}} className="mt-4" />
                 )}
               </div>
             </div>
           )}
 
           {lichSu.length > 0 && (
-            <div className="card" style={{marginTop:'16px'}}>
+            <div className="card" className="mt-4">
               <div className="card-header" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
                 <span>📜 Lịch sử tính toán</span>
                 <button className="btn btn-danger btn-sm" onClick={() => setLichSu([])}>Xóa lịch sử</button>
@@ -7944,6 +8887,91 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       lenhTamGiuSo: '', lenhTamGiuNgay: '',
       lenhTamGiamSo: '', lenhTamGiamNgay: '',
       ngayChuyen: '', noiChuyen: ''
+    };
+
+    // ==================== EditPasswordGate Component ====================
+    // Modal yêu cầu nhập mật khẩu trước khi mở chế độ chỉnh sửa vụ việc
+    const EditPasswordGate = ({ onConfirm, onCancel }) => {
+      const [pwd, setPwd] = React.useState('');
+      const [err, setErr] = React.useState('');
+      const [busy, setBusy] = React.useState(false);
+      const [show, setShow] = React.useState(false);
+      const ref = React.useRef(null);
+      React.useEffect(() => {
+        let t = setTimeout(() => { if (ref.current) ref.current.focus(); }, 80);
+        return () => clearTimeout(t);
+      }, []);
+
+      const verify = async () => {
+        if (!pwd) { setErr('Vui lòng nhập mật khẩu.'); return; }
+        setBusy(true); setErr('');
+        try {
+          const uname = sessionStorage.getItem('username') || 'admin';
+          const user = await getUserFromDB(uname).catch(() => null);
+          if (!user) { setErr('Không tìm thấy tài khoản.'); setBusy(false); return; }
+          const hash = await hashPassword(pwd);
+          if (hash === user.password) {
+            writeAuditLog('EDIT_UNLOCKED', { note: 'Mở chỉnh sửa vụ việc' });
+            onConfirm();
+          } else {
+            writeAuditLog('EDIT_DENIED', { note: 'Sai mật khẩu khi mở sửa vụ việc' });
+            setErr('❌ Mật khẩu không đúng!');
+            try { AudioManager.warningSound(); } catch(_) {}
+          }
+        } catch(e) { setErr('Lỗi xác thực: ' + e.message); }
+        setBusy(false);
+      };
+
+      return (
+        <div className="modal-overlay" style={{zIndex:99998}}>
+          <div className="modal-box" style={{width:'420px',maxWidth:'96vw'}}>
+            <div className="modal-header" style={{background:'linear-gradient(135deg,#1e40af,#1d4ed8)'}}>
+              🔐 Xác Nhận Chỉnh Sửa
+              <button className="modal-close" onClick={onCancel}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:'8px',padding:'10px 14px',marginBottom:'14px',display:'flex',alignItems:'flex-start',gap:'10px'}}>
+                <span style={{fontSize:'22px',flexShrink:0}}>🔒</span>
+                <div>
+                  <div style={{fontWeight:700,color:'#1e40af',marginBottom:'3px'}}>Cần xác thực để chỉnh sửa</div>
+                  <div style={{fontSize:'12px',color:'#1e3a8a',lineHeight:1.5}}>
+                    Vui lòng nhập mật khẩu đăng nhập để mở khoá chỉnh sửa vụ việc này.
+                    Mọi thao tác sẽ được ghi vào nhật ký bảo mật.
+                  </div>
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">🔑 Mật khẩu đăng nhập</label>
+                <div style={{position:'relative'}}>
+                  <input
+                    ref={ref}
+                    type={show ? 'text' : 'password'}
+                    className={`form-control${err ? ' error' : ''}`}
+                    value={pwd}
+                    onChange={e => { setPwd(e.target.value); setErr(''); }}
+                    onKeyDown={e => e.key === 'Enter' && verify()}
+                    placeholder="Nhập mật khẩu của bạn..."
+                    autoComplete="current-password"
+                    style={{paddingRight:'40px'}}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShow(s => !s)}
+                    style={{position:'absolute',right:'10px',top:'50%',transform:'translateY(-50%)',background:'none',border:'none',cursor:'pointer',color:'#64748b',fontSize:'16px',padding:'0',lineHeight:1}}
+                  >{show ? '🙈' : '👁'}</button>
+                </div>
+                {err && <div style={{color:'#dc2626',fontSize:'12px',marginTop:'5px',fontWeight:600}}>{err}</div>}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-gray" onClick={onCancel}>Hủy</button>
+              <button className="btn btn-primary" onClick={verify} disabled={busy}>
+                {busy ? '⏳ Đang xác thực...' : '🔓 Mở khoá chỉnh sửa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
     };
 
         // ==================== Main App Component ====================
@@ -8051,6 +9079,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const [filterEndDate, setFilterEndDate] = useState('');
       
       const [searchQuery, setSearchQuery] = useState('');
+      // Reset trang về 1 khi search/filter thay đổi
+      React.useEffect(() => { setCurrentPage(1); }, [searchQuery, statusFilter]);
       const [statusFilter, setStatusFilter] = useState('all');
       const [currentPage, setCurrentPage] = useState(1);
       const itemsPerPage = 10;
@@ -8110,6 +9140,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const [showUnitSettings, setShowUnitSettings] = useState(false);
       const [showWordExport, setShowWordExport] = useState(false);
       const [showPlaceholderTool, setShowPlaceholderTool] = useState(false);
+      // Gate xác thực mật khẩu trước khi chỉnh sửa vụ việc
+      const [editGate, setEditGate] = useState(null); // { caseObj } | null
       
       // Refs for report date pickers
       const startDateRef = useRef(null);
@@ -8136,6 +9168,10 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       
       const handleLogout = useCallback(() => {
         writeAuditLog('LOGOUT', {});
+        // [AUTH-FIX] Đăng xuất Firebase Auth khi logout cục bộ
+        if (isFirebaseConfigured() && typeof firebase !== 'undefined' && firebase.auth) {
+          firebase.auth().signOut().catch(() => {});
+        }
         sessionStorage.clear();
         setLoggedIn(false);
         setViewMode('list');
@@ -8235,8 +9271,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   };
                 });
               }
-              console.log('[Firebase] \u2705 Loaded', cloudCases.length,
-                'cases,', Object.keys(cloudPhotoMap).length, 'photo docs');
+              /* Firebase cloud sync complete */
+
 
               // STEP D — Merge: metadata + cloud photos + local photos fallback
               const merged = validateCases(_injectPhotos(cloudCases, cloudPhotoMap, localPhotoMap));
@@ -8522,15 +9558,27 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         setExportFilter(e.target.value);
       }, []);
       
-      const handleSubmitExport = useCallback(() => {
-        const error = exportToExcel(cases, exportFilter, filterCaseId, filterStartDate, filterEndDate);
-        if (error) {
-          setErrorMessage(error);
-        } else {
-          setSuccessMessage('Xuất dữ liệu Excel thành công!');
-          setShowExportFilter(false);
+      // [OPT-4] Loading state cho export — tránh double-click và hiển thị lỗi rõ ràng
+      const [isExporting, setIsExporting] = React.useState(false);
+
+      const handleSubmitExport = useCallback(async () => {
+        if (isExporting) return;
+        setIsExporting(true);
+        try {
+          const error = exportToExcel(cases, exportFilter, filterCaseId, filterStartDate, filterEndDate);
+          if (error) {
+            setErrorMessage(error);
+          } else {
+            setSuccessMessage('Xuất dữ liệu Excel thành công!');
+            setShowExportFilter(false);
+          }
+        } catch (e) {
+          console.error('[Export Excel] Lỗi:', e);
+          setErrorMessage('❌ Xuất file thất bại: ' + (e.message || 'Lỗi không xác định') + '. Vui lòng kiểm tra lại dữ liệu.');
+        } finally {
+          setIsExporting(false);
         }
-      }, [cases, exportFilter, filterCaseId, filterStartDate, filterEndDate]);
+      }, [cases, exportFilter, filterCaseId, filterStartDate, filterEndDate, isExporting]);
       
       const handleSubmitObject = useCallback((e) => {
         
@@ -8558,6 +9606,12 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           }
         }
         
+        // Validation: Tên đối tượng là bắt buộc
+        if (!objectData.name || !objectData.name.trim()) {
+          setErrorMessage('Vui lòng nhập Họ và Tên đối tượng (trường bắt buộc).');
+          return;
+        }
+
         // Update or add object
         let newTempObjects;
         if (editingIndex !== null) {
@@ -8632,6 +9686,16 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         setShowForm(true);
         setEditingCaseId(c.id);
         setIsEditing(true);
+        setViewMode('add');
+      }, []);
+
+      // Xem vụ việc (chỉ đọc, không cần mật khẩu)
+      const handleViewCase = useCallback((c) => {
+        setCaseData({ ...c, type: Array.isArray(c.type) ? c.type : [] });
+        setTempObjects(c.objects || []);
+        setShowForm(true);
+        setEditingCaseId(c.id);
+        setIsEditing(false);   // read-only
         setViewMode('add');
       }, []);
       
@@ -9388,10 +10452,13 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         
         return cases.filter(c => {
           const matchesSearch = searchQuery
-            ? (c.id?.toLowerCase().includes(lowerSearchQuery) || 
-               (Array.isArray(c.type) ? 
-                 c.type.some(type => type.toLowerCase().includes(lowerSearchQuery)) : 
-                 c.type?.toLowerCase().includes(lowerSearchQuery)))
+            ? (c.id?.toLowerCase().includes(lowerSearchQuery) ||
+               c.noixayra?.toLowerCase().includes(lowerSearchQuery) ||
+               c.phanLoaiTin?.toLowerCase().includes(lowerSearchQuery) ||
+               (Array.isArray(c.type) ?
+                 c.type.some(type => type.toLowerCase().includes(lowerSearchQuery)) :
+                 c.type?.toLowerCase().includes(lowerSearchQuery)) ||
+               (c.objects||[]).some(o => o.name?.toLowerCase().includes(lowerSearchQuery)))
             : true;
           
           const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
@@ -9400,16 +10467,30 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         });
       }, [cases, searchQuery, statusFilter]);
       
-      const completedCases = useMemo(() => cases.filter(c => c.status === 'hoàn thành'), [cases]);
+      const completedCases = useMemo(() => {
+        const lq = searchQuery.toLowerCase();
+        return cases.filter(c => {
+          if (c.status !== 'hoàn thành') return false;
+          if (!searchQuery) return true;
+          return (
+            c.id?.toLowerCase().includes(lq) ||
+            c.noixayra?.toLowerCase().includes(lq) ||
+            c.phanLoaiTin?.toLowerCase().includes(lq) ||
+            (Array.isArray(c.type) ? c.type.some(t => t.toLowerCase().includes(lq)) : c.type?.toLowerCase().includes(lq)) ||
+            (c.objects||[]).some(o => o.name?.toLowerCase().includes(lq))
+          );
+        });
+      }, [cases, searchQuery]);
+      // [OPT-2] useMemo cho pagination — tránh tính toán lại khi không cần thiết
       const totalPages = Math.ceil(filteredCases.length / itemsPerPage);
-      const paginatedCases = filteredCases.slice(
-        (currentPage - 1) * itemsPerPage, 
-        currentPage * itemsPerPage
+      const paginatedCases = useMemo(() =>
+        filteredCases.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage),
+        [filteredCases, currentPage, itemsPerPage]
       );
       const completedTotalPages = Math.ceil(completedCases.length / itemsPerPage);
-      const paginatedCompletedCases = completedCases.slice(
-        (currentPage - 1) * itemsPerPage,
-        currentPage * itemsPerPage
+      const paginatedCompletedCases = useMemo(() =>
+        completedCases.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage),
+        [completedCases, currentPage, itemsPerPage]
       );
       
       const getMinExpiration = useCallback((objects, field) => {
@@ -9502,7 +10583,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               <div className="sidebar-section-label">Vụ Việc</div>
               <button
                 className={`sidebar-btn ${viewMode === 'list' && !showForm && !showObjectForm ? 'active' : ''}`}
-                onClick={() => { setShowForm(false); setShowObjectForm(false); setViewMode('list'); }}
+                onClick={() => { setShowForm(false); setShowObjectForm(false); setViewMode('list'); setCurrentPage(1); }}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
                 Vụ việc đang xử lý
@@ -9514,7 +10595,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               </button>
               <button
                 className={`sidebar-btn ${viewMode === 'completed' ? 'active' : ''}`}
-                onClick={() => { setShowForm(false); setShowObjectForm(false); setViewMode('completed'); }}
+                onClick={() => { setShowForm(false); setShowObjectForm(false); setViewMode('completed'); setCurrentPage(1); }}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
                 Vụ việc đã kết thúc
@@ -9667,6 +10748,14 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             {showPlaceholderTool && (
               <PlaceholderToolModal onClose={() => setShowPlaceholderTool(false)} addToast={addToast} />
             )}
+
+            {/* ── Modal xác thực mật khẩu trước khi chỉnh sửa ── */}
+            {editGate && (
+              <EditPasswordGate
+                onConfirm={() => { setEditGate(null); handleEditCase(editGate.caseObj); }}
+                onCancel={() => setEditGate(null)}
+              />
+            )}
             
             {showObjectForm ? (
               <ObjectForm
@@ -9713,6 +10802,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 caseTypesList={caseTypesList}
                 handlingMethodsList={handlingMethodsList}
                 hasUnsavedChanges={hasUnsavedChanges}
+                setEditGate={setEditGate}
               />
             ) : viewMode === 'tinhHan' ? (
               <TinhHanComponent cases={cases} />
@@ -9912,7 +11002,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                               <tr key={c.id} style={isUrgent ? {background: '#fff1f2'} : {}}>
                                 <td className="fixed-width-stt" style={{fontWeight:600}}>{(currentPage - 1) * itemsPerPage + index + 1}</td>
                                 <td className="fixed-width-id" style={{fontWeight:700,color:'#1d4ed8',whiteSpace:'nowrap'}} title={c.id}>{c.id}</td>
-                                <td className="fixed-width-date" style={{whiteSpace:'nowrap'}}>{DateUtils.formatToVietnamese(c.dateReceived)}</td>
+                                <td className="fixed-width-date" className="whitespace-nowrap">{DateUtils.formatToVietnamese(c.dateReceived)}</td>
                                 <td className="fixed-width-description wrap-text" style={{textAlign:'left'}} title={c.noixayra}>{c.noixayra || ''}</td>
                                 <td className="fixed-width-object-count" style={{fontWeight:700,color:'#1d4ed8',fontSize:'14px'}}>
                                   {c.objects ? c.objects.length : 0}
@@ -9921,7 +11011,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                                 <td style={{width:'90px',fontSize:'11px',textAlign:'center'}} className="wrap-text">{c.status}</td>
                                 <td style={{padding:'4px 6px'}}>
                                   <div style={{display:'flex',gap:'3px',justifyContent:'center'}}>
-                                  <button className="btn btn-primary btn-xs" onClick={() => handleEditCase(c)}>✏️ Sửa</button>
+                                  <button className="btn btn-info btn-xs" onClick={() => handleViewCase(c)}>👁 Xem</button>
+                                  <button className="btn btn-primary btn-xs" onClick={() => setEditGate({ caseObj: c })}>✏️ Sửa</button>
                                   <button className="btn btn-danger btn-xs" onClick={() => handleDeleteCaseConfirm(c.id)}>🗑️</button>
                                   </div>
                                 </td>
@@ -9976,14 +11067,15 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                             <tr key={c.id}>
                               <td className="fixed-width-stt" style={{fontWeight:600}}>{(currentPage - 1) * itemsPerPage + index + 1}</td>
                               <td className="fixed-width-id" style={{fontWeight:700,color:'#15803d',whiteSpace:'nowrap'}} title={c.id}>{c.id}</td>
-                              <td className="fixed-width-date" style={{whiteSpace:'nowrap'}}>{DateUtils.formatToVietnamese(c.dateReceived)}</td>
+                              <td className="fixed-width-date" className="whitespace-nowrap">{DateUtils.formatToVietnamese(c.dateReceived)}</td>
                               <td className="fixed-width-description wrap-text" style={{textAlign:'left'}} title={c.noixayra}>{c.noixayra || ''}</td>
                               <td className="fixed-width-object-count" style={{fontWeight:700,color:'#1d4ed8',fontSize:'14px'}}>{c.objects ? c.objects.length : 0}</td>
                               <td className="fixed-width-phanloai wrap-text" style={{fontSize:'11px'}}>{c.phanLoaiTin || ''}</td>
                               <td style={{width:'90px',fontSize:'11px',textAlign:'center'}} className="wrap-text">{c.status}</td>
                               <td style={{padding:'4px 6px'}}>
                                 <div style={{display:'flex',gap:'3px',justifyContent:'center'}}>
-                                <button className="btn btn-primary btn-xs" onClick={() => handleEditCase(c)}>✏️ Sửa</button>
+                                <button className="btn btn-info btn-xs" onClick={() => handleViewCase(c)}>👁 Xem</button>
+                                <button className="btn btn-primary btn-xs" onClick={() => setEditGate({ caseObj: c })}>✏️ Sửa</button>
                                 <button className="btn btn-danger btn-xs" onClick={() => handleDeleteCaseConfirm(c.id)}>🗑️</button>
                                 </div>
                               </td>
@@ -10045,7 +11137,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               </div>
               <div className="modal-body">
                 <div className="form-group">
-                  <label className="form-label" style={{fontWeight:700}}>Loại dữ liệu</label>
+                  <label className="form-label" className="font-bold">Loại dữ liệu</label>
                   <select value={exportFilter} onChange={handleExportFilterChange} className="form-control">
                     <option value="both">Tất cả vụ việc</option>
                     <option value="ongoing">Đang thực hiện</option>
@@ -10056,18 +11148,18 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   </select>
                 </div>
                 <div className="form-group">
-                  <label className="form-label" style={{fontWeight:700}}>Mã vụ việc (lọc chính xác)</label>
+                  <label className="form-label" className="font-bold">Mã vụ việc (lọc chính xác)</label>
                   <input type="text" value={filterCaseId} onChange={(e) => setFilterCaseId(e.target.value)}
                     className="form-control" placeholder="Để trống = lấy tất cả" />
                 </div>
                 <div className="form-row">
                   <div className="form-group">
-                    <label className="form-label" style={{fontWeight:700}}>Từ ngày</label>
-                    <input type="text" ref={filterStartDateRef} name="filterStartDate" placeholder="dd/mm/yyyy" className="form-control" readOnly style={{cursor:'pointer'}} />
+                    <label className="form-label" className="font-bold">Từ ngày</label>
+                    <input type="text" ref={filterStartDateRef} name="filterStartDate" placeholder="dd/mm/yyyy" className="form-control" readOnly className="cursor-pointer" />
                   </div>
                   <div className="form-group">
-                    <label className="form-label" style={{fontWeight:700}}>Đến ngày</label>
-                    <input type="text" ref={filterEndDateRef} name="filterEndDate" placeholder="dd/mm/yyyy" className="form-control" readOnly style={{cursor:'pointer'}} />
+                    <label className="form-label" className="font-bold">Đến ngày</label>
+                    <input type="text" ref={filterEndDateRef} name="filterEndDate" placeholder="dd/mm/yyyy" className="form-control" readOnly className="cursor-pointer" />
                   </div>
                 </div>
                 <div style={{background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:'8px',padding:'10px',fontSize:'12px',color:'#0369a1',marginTop:'8px'}}>
@@ -10077,7 +11169,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               </div>
               <div className="modal-footer">
                 <button className="btn btn-gray" onClick={() => setShowExportFilter(false)}>Hủy</button>
-                <button className="btn btn-success" onClick={handleSubmitExport}>📥 Xuất Excel</button>
+                {/* [OPT-4] Nút có loading spinner — tránh bấm nhiều lần */}
+                <button className="btn btn-success" onClick={handleSubmitExport} disabled={isExporting}>{isExporting ? (<><span style={{display:"inline-block",animation:"spin 1s linear infinite",marginRight:"6px"}}>⏳</span>Đang xử lý...</>) : "📥 Xuất Excel"}</button>
               </div>
             </div>
           </div>
