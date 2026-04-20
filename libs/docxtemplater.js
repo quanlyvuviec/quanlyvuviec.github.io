@@ -1,7 +1,7 @@
 /******/ (function() { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
-/***/ 760:
+/***/ 673:
 /***/ (function(module) {
 
 module.exports = {
@@ -12,7 +12,7 @@ module.exports = {
 
 /***/ }),
 
-/***/ 712:
+/***/ 891:
 /***/ (function(module) {
 
 var ctXML = "[Content_Types].xml";
@@ -45,7 +45,7 @@ module.exports = collectContentTypes;
 
 /***/ }),
 
-/***/ 731:
+/***/ 356:
 /***/ (function(module) {
 
 var coreContentType = "application/vnd.openxmlformats-package.core-properties+xml";
@@ -61,7 +61,7 @@ module.exports = {
 
 /***/ }),
 
-/***/ 557:
+/***/ 207:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _slicedToArray(arr, i) { return _arrayWithHoles(arr) || _iterableToArrayLimit(arr, i) || _unsupportedIterableToArray(arr, i) || _nonIterableRest(); }
@@ -70,12 +70,12 @@ function _unsupportedIterableToArray(o, minLen) { if (!o) return; if (typeof o =
 function _arrayLikeToArray(arr, len) { if (len == null || len > arr.length) len = arr.length; for (var i = 0, arr2 = new Array(len); i < len; i++) arr2[i] = arr[i]; return arr2; }
 function _iterableToArrayLimit(r, l) { var t = null == r ? null : "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"]; if (null != t) { var e, n, i, u, a = [], f = !0, o = !1; try { if (i = (t = t.call(r)).next, 0 === l) { if (Object(t) !== t) return; f = !1; } else for (; !(f = (e = i.call(t)).done) && (a.push(e.value), a.length !== l); f = !0); } catch (r) { o = !0, n = r; } finally { try { if (!f && null != t["return"] && (u = t["return"](), Object(u) !== u)) return; } finally { if (o) throw n; } } return a; } }
 function _arrayWithHoles(arr) { if (Array.isArray(arr)) return arr; }
-var _require = __webpack_require__(760),
+var _require = __webpack_require__(673),
   DOMParser = _require.DOMParser,
   XMLSerializer = _require.XMLSerializer;
-var _require2 = __webpack_require__(257),
+var _require2 = __webpack_require__(946),
   throwXmlTagNotFound = _require2.throwXmlTagNotFound;
-var _require3 = __webpack_require__(287),
+var _require3 = __webpack_require__(320),
   last = _require3.last,
   first = _require3.first;
 function isWhiteSpace(value) {
@@ -494,33 +494,33 @@ module.exports = {
 
 /***/ }),
 
-/***/ 380:
+/***/ 807:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 var _excluded = ["modules"];
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _objectWithoutProperties(source, excluded) { if (source == null) return {}; var target = _objectWithoutPropertiesLoose(source, excluded); var key, i; if (Object.getOwnPropertySymbols) { var sourceSymbolKeys = Object.getOwnPropertySymbols(source); for (i = 0; i < sourceSymbolKeys.length; i++) { key = sourceSymbolKeys[i]; if (excluded.indexOf(key) >= 0) continue; if (!Object.prototype.propertyIsEnumerable.call(source, key)) continue; target[key] = source[key]; } } return target; }
-function _objectWithoutPropertiesLoose(source, excluded) { if (source == null) return {}; var target = {}; var sourceKeys = Object.keys(source); var key, i; for (i = 0; i < sourceKeys.length; i++) { key = sourceKeys[i]; if (excluded.indexOf(key) >= 0) continue; target[key] = source[key]; } return target; }
+function _objectWithoutPropertiesLoose(source, excluded) { if (source == null) return {}; var target = {}; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { if (excluded.indexOf(key) >= 0) continue; target[key] = source[key]; } } return target; }
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor); } }
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var DocUtils = __webpack_require__(557);
-DocUtils.traits = __webpack_require__(505);
-DocUtils.moduleWrapper = __webpack_require__(223);
-var createScope = __webpack_require__(919);
-var _require = __webpack_require__(257),
+var DocUtils = __webpack_require__(207);
+DocUtils.traits = __webpack_require__(536);
+DocUtils.moduleWrapper = __webpack_require__(899);
+var createScope = __webpack_require__(779);
+var _require = __webpack_require__(946),
   throwMultiError = _require.throwMultiError,
   throwResolveBeforeCompile = _require.throwResolveBeforeCompile,
   throwRenderInvalidTemplate = _require.throwRenderInvalidTemplate,
   throwRenderTwice = _require.throwRenderTwice;
-var logErrors = __webpack_require__(567);
-var collectContentTypes = __webpack_require__(712);
+var logErrors = __webpack_require__(460);
+var collectContentTypes = __webpack_require__(891);
 var ctXML = "[Content_Types].xml";
 var relsFile = "_rels/.rels";
-var commonModule = __webpack_require__(107);
-var Lexer = __webpack_require__(303);
+var commonModule = __webpack_require__(438);
+var Lexer = __webpack_require__(263);
 var defaults = DocUtils.defaults,
   str2xml = DocUtils.str2xml,
   xml2str = DocUtils.xml2str,
@@ -529,12 +529,12 @@ var defaults = DocUtils.defaults,
   uniq = DocUtils.uniq,
   getDuplicates = DocUtils.getDuplicates,
   stableSort = DocUtils.stableSort;
-var _require2 = __webpack_require__(257),
+var _require2 = __webpack_require__(946),
   XTInternalError = _require2.XTInternalError,
   throwFileTypeNotIdentified = _require2.throwFileTypeNotIdentified,
   throwFileTypeNotHandled = _require2.throwFileTypeNotHandled,
   throwApiVersionError = _require2.throwApiVersionError;
-var currentModuleApiVersion = [3, 38, 0];
+var currentModuleApiVersion = [3, 40, 0];
 function dropUnsupportedFileTypesModules(dx) {
   dx.modules = dx.modules.filter(function (module) {
     if (module.supportedFileTypes) {
@@ -579,7 +579,7 @@ var Docxtemplater = /*#__PURE__*/function () {
       this.v4Constructor = true;
     }
   }
-  _createClass(Docxtemplater, [{
+  return _createClass(Docxtemplater, [{
     key: "verifyApiVersion",
     value: function verifyApiVersion(neededVersion) {
       neededVersion = neededVersion.split(".").map(function (i) {
@@ -887,7 +887,7 @@ var Docxtemplater = /*#__PURE__*/function () {
         throwFileTypeNotHandled(fileType);
       }
       if (!fileType) {
-        throwFileTypeNotIdentified();
+        throwFileTypeNotIdentified(this.zip);
       }
       this.fileType = fileType;
       dropUnsupportedFileTypesModules(this);
@@ -938,6 +938,8 @@ var Docxtemplater = /*#__PURE__*/function () {
       verifyErrors(this);
       this.sendEvent("syncing-zip");
       this.syncZip();
+      // The synced-zip event is used in the subtemplate module for example
+      this.sendEvent("synced-zip");
       return this;
     }
   }, {
@@ -1000,7 +1002,6 @@ var Docxtemplater = /*#__PURE__*/function () {
       return this.templatedFiles;
     }
   }]);
-  return Docxtemplater;
 }();
 function verifyErrors(doc) {
   var compiled = doc.compiled;
@@ -1015,16 +1016,16 @@ function verifyErrors(doc) {
   }
 }
 Docxtemplater.DocUtils = DocUtils;
-Docxtemplater.Errors = __webpack_require__(257);
-Docxtemplater.XmlTemplater = __webpack_require__(827);
-Docxtemplater.FileTypeConfig = __webpack_require__(952);
-Docxtemplater.XmlMatcher = __webpack_require__(465);
+Docxtemplater.Errors = __webpack_require__(946);
+Docxtemplater.XmlTemplater = __webpack_require__(245);
+Docxtemplater.FileTypeConfig = __webpack_require__(271);
+Docxtemplater.XmlMatcher = __webpack_require__(367);
 module.exports = Docxtemplater;
 module.exports["default"] = Docxtemplater;
 
 /***/ }),
 
-/***/ 567:
+/***/ 460:
 /***/ (function(module) {
 
 // The error thrown here contains additional information when logged with JSON.stringify (it contains a properties object containing all suberrors).
@@ -1060,16 +1061,16 @@ module.exports = logger;
 
 /***/ }),
 
-/***/ 257:
+/***/ 946:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
 function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var _require = __webpack_require__(287),
+var _require = __webpack_require__(320),
   last = _require.last,
   first = _require.first;
 function XTError(message) {
@@ -1398,11 +1399,18 @@ function throwRenderTwice() {
   };
   throw err;
 }
-function throwFileTypeNotIdentified() {
-  var err = new XTInternalError("The filetype for this file could not be identified, is this file corrupted ?");
+function throwFileTypeNotIdentified(zip) {
+  var files = Object.keys(zip.files).slice(0, 10);
+  var msg = "";
+  if (files.length === 0) {
+    msg = "Empty zip file";
+  } else {
+    msg = "Zip file contains : ".concat(files.join(","));
+  }
+  var err = new XTInternalError("The filetype for this file could not be identified, is this file corrupted ? ".concat(msg));
   err.properties = {
     id: "filetype_not_identified",
-    explanation: "The filetype for this file could not be identified, is this file corrupted ?"
+    explanation: "The filetype for this file could not be identified, is this file corrupted ? ".concat(msg)
   };
   throw err;
 }
@@ -1463,14 +1471,14 @@ module.exports = {
 
 /***/ }),
 
-/***/ 952:
+/***/ 271:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
-var loopModule = __webpack_require__(19);
-var spacePreserveModule = __webpack_require__(95);
-var rawXmlModule = __webpack_require__(182);
-var expandPairTrait = __webpack_require__(999);
-var render = __webpack_require__(163);
+var loopModule = __webpack_require__(885);
+var spacePreserveModule = __webpack_require__(522);
+var rawXmlModule = __webpack_require__(60);
+var expandPairTrait = __webpack_require__(201);
+var render = __webpack_require__(307);
 function DocXFileTypeConfig() {
   return {
     getTemplatedFiles: function getTemplatedFiles() {
@@ -1517,7 +1525,7 @@ function PptXFileTypeConfig() {
       return doc.textTarget;
     },
     tagsXmlTextArray: ["Company", "HyperlinkBase", "Manager", "cp:category", "cp:keywords", "dc:creator", "dc:description", "dc:subject", "dc:title", "a:t", "m:t", "vt:lpstr", "vt:lpwstr"],
-    tagsXmlLexedArray: ["p:sp", "a:tc", "a:tr", "a:tbl", "a:p", "a:r", "a:rPr", "p:txBody", "a:txBody", "a:off", "a:ext", "p:graphicFrame", "p:xfrm", "a16:rowId", "a:endParaRPr"],
+    tagsXmlLexedArray: ["p:sp", "a:tc", "a:tr", "a:tbl", "a:graphicData", "a:p", "a:r", "a:rPr", "p:txBody", "a:txBody", "a:off", "a:ext", "p:graphicFrame", "p:xfrm", "a16:rowId", "a:endParaRPr"],
     droppedTagsInsidePlaceholder: ["a:p", "a:endParaRPr"],
     expandTags: [{
       contains: "a:tc",
@@ -1533,7 +1541,7 @@ function PptXFileTypeConfig() {
     tagShouldContain: [{
       tag: "a:tbl",
       shouldContain: ["a:tr"],
-      drop: true
+      dropParent: "p:graphicFrame"
     }, {
       tag: "p:txBody",
       shouldContain: ["a:p"],
@@ -1552,7 +1560,7 @@ module.exports = {
 
 /***/ }),
 
-/***/ 330:
+/***/ 322:
 /***/ (function(module) {
 
 var docxContentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
@@ -1577,7 +1585,7 @@ module.exports = filetypes;
 
 /***/ }),
 
-/***/ 709:
+/***/ 830:
 /***/ (function(module) {
 
 function getResolvedId(part, options) {
@@ -1595,16 +1603,16 @@ module.exports = getResolvedId;
 
 /***/ }),
 
-/***/ 127:
+/***/ 208:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
-var _require = __webpack_require__(557),
+var _require = __webpack_require__(207),
   startsWith = _require.startsWith,
   endsWith = _require.endsWith,
   isStarting = _require.isStarting,
   isEnding = _require.isEnding,
   isWhiteSpace = _require.isWhiteSpace;
-var filetypes = __webpack_require__(330);
+var filetypes = __webpack_require__(322);
 function addEmptyParagraphAfterTable(parts) {
   var lastNonEmpty = "";
   for (var i = 0, len = parts.length; i < len; i++) {
@@ -1647,25 +1655,44 @@ function joinUncorrupt(parts, options) {
         tag = _contains$j.tag,
         shouldContain = _contains$j.shouldContain,
         value = _contains$j.value,
-        drop = _contains$j.drop;
+        drop = _contains$j.drop,
+        dropParent = _contains$j.dropParent;
       if (currentlyCollecting === j) {
         if (isEnding(part, tag)) {
           currentlyCollecting = -1;
-          if (drop) {
-            for (var k = startIndex; k <= i; k++) {
-              parts[k] = "";
+          if (dropParent) {
+            var start = void 0,
+              end = void 0;
+            for (var k = startIndex; k > 0; k--) {
+              if (isStarting(parts[k], dropParent)) {
+                start = k;
+                break;
+              }
+            }
+            for (var _k = i; _k < parts.length; _k++) {
+              if (isEnding(parts[_k], dropParent)) {
+                end = _k;
+                break;
+              }
+            }
+            for (var _k2 = start; _k2 <= end; _k2++) {
+              parts[_k2] = "";
+            }
+          } else if (drop) {
+            for (var _k3 = startIndex; _k3 <= i; _k3++) {
+              parts[_k3] = "";
             }
           } else {
-            for (var _k = startIndex; _k < i; _k++) {
-              parts[_k] = "";
+            for (var _k4 = startIndex; _k4 < i; _k4++) {
+              parts[_k4] = "";
             }
             parts[i] = collecting + value + part;
           }
           break;
         }
         collecting += part;
-        for (var _k2 = 0, len3 = shouldContain.length; _k2 < len3; _k2++) {
-          var sc = shouldContain[_k2];
+        for (var _k5 = 0, len3 = shouldContain.length; _k5 < len3; _k5++) {
+          var sc = shouldContain[_k5];
           if (isStarting(part, sc)) {
             currentlyCollecting = -1;
             // parts[i] = collecting;
@@ -1700,7 +1727,7 @@ module.exports = joinUncorrupt;
 
 /***/ }),
 
-/***/ 303:
+/***/ 263:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
@@ -1713,9 +1740,9 @@ function _arrayWithHoles(arr) { if (Array.isArray(arr)) return arr; }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
 function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var _require = __webpack_require__(257),
+var _require = __webpack_require__(946),
   getUnclosedTagException = _require.getUnclosedTagException,
   getUnopenedTagException = _require.getUnopenedTagException,
   getDuplicateOpenTagException = _require.getDuplicateOpenTagException,
@@ -1723,7 +1750,7 @@ var _require = __webpack_require__(257),
   throwMalformedXml = _require.throwMalformedXml,
   throwXmlInvalid = _require.throwXmlInvalid,
   XTTemplateError = _require.XTTemplateError;
-var _require2 = __webpack_require__(557),
+var _require2 = __webpack_require__(207),
   isTextStart = _require2.isTextStart,
   isTextEnd = _require2.isTextEnd,
   wordToUtf8 = _require2.wordToUtf8;
@@ -2150,7 +2177,7 @@ module.exports = {
 
 /***/ }),
 
-/***/ 509:
+/***/ 798:
 /***/ (function(module) {
 
 function getMinFromArrays(arrays, state) {
@@ -2186,10 +2213,10 @@ module.exports = function (arrays) {
 
 /***/ }),
 
-/***/ 223:
+/***/ 899:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
-var _require = __webpack_require__(257),
+var _require = __webpack_require__(946),
   XTInternalError = _require.XTInternalError;
 function emptyFun() {}
 function identity(i) {
@@ -2234,18 +2261,18 @@ module.exports = function (module) {
 
 /***/ }),
 
-/***/ 107:
+/***/ 438:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor); } }
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var wrapper = __webpack_require__(223);
-var filetypes = __webpack_require__(330);
-var _require = __webpack_require__(731),
+var wrapper = __webpack_require__(899);
+var filetypes = __webpack_require__(322);
+var _require = __webpack_require__(356),
   settingsContentType = _require.settingsContentType,
   coreContentType = _require.coreContentType,
   appContentType = _require.appContentType,
@@ -2256,7 +2283,7 @@ var Common = /*#__PURE__*/function () {
     _classCallCheck(this, Common);
     this.name = "Common";
   }
-  _createClass(Common, [{
+  return _createClass(Common, [{
     key: "getFileType",
     value: function getFileType(_ref) {
       var doc = _ref.doc;
@@ -2297,7 +2324,6 @@ var Common = /*#__PURE__*/function () {
       return ftCandidate;
     }
   }]);
-  return Common;
 }();
 module.exports = function () {
   return wrapper(new Common());
@@ -2305,24 +2331,24 @@ module.exports = function () {
 
 /***/ }),
 
-/***/ 999:
+/***/ 201:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor); } }
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
 var traitName = "expandPair";
-var mergeSort = __webpack_require__(509);
-var _require = __webpack_require__(557),
+var mergeSort = __webpack_require__(798);
+var _require = __webpack_require__(207),
   getLeft = _require.getLeft,
   getRight = _require.getRight;
-var wrapper = __webpack_require__(223);
-var _require2 = __webpack_require__(505),
+var wrapper = __webpack_require__(899);
+var _require2 = __webpack_require__(536),
   getExpandToDefault = _require2.getExpandToDefault;
-var _require3 = __webpack_require__(257),
+var _require3 = __webpack_require__(946),
   getUnmatchedLoopException = _require3.getUnmatchedLoopException,
   getClosingTagNotMatchOpeningTag = _require3.getClosingTagNotMatchOpeningTag,
   getUnbalancedLoopException = _require3.getUnbalancedLoopException;
@@ -2452,7 +2478,7 @@ var ExpandPairTrait = /*#__PURE__*/function () {
     _classCallCheck(this, ExpandPairTrait);
     this.name = "ExpandPairTrait";
   }
-  _createClass(ExpandPairTrait, [{
+  return _createClass(ExpandPairTrait, [{
     key: "optionsTransformer",
     value: function optionsTransformer(options, docxtemplater) {
       this.expandTags = docxtemplater.fileTypeConfig.expandTags.concat(docxtemplater.options.paragraphLoop ? docxtemplater.fileTypeConfig.onParagraphLoop : []);
@@ -2557,7 +2583,6 @@ var ExpandPairTrait = /*#__PURE__*/function () {
       };
     }
   }]);
-  return ExpandPairTrait;
 }();
 module.exports = function () {
   return wrapper(new ExpandPairTrait());
@@ -2565,7 +2590,7 @@ module.exports = function () {
 
 /***/ }),
 
-/***/ 19:
+/***/ 885:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
@@ -2585,9 +2610,9 @@ function _arrayWithHoles(arr) { if (Array.isArray(arr)) return arr; }
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor); } }
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var _require = __webpack_require__(557),
+var _require = __webpack_require__(207),
   chunkBy = _require.chunkBy,
   last = _require.last,
   isParagraphStart = _require.isParagraphStart,
@@ -2599,8 +2624,8 @@ var _require = __webpack_require__(557),
   isTagStart = _require.isTagStart,
   getSingleAttribute = _require.getSingleAttribute,
   setSingleAttribute = _require.setSingleAttribute;
-var filetypes = __webpack_require__(330);
-var wrapper = __webpack_require__(223);
+var filetypes = __webpack_require__(322);
+var wrapper = __webpack_require__(899);
 var moduleName = "loop";
 function hasContent(parts) {
   return parts.some(function (part) {
@@ -2763,7 +2788,7 @@ var LoopModule = /*#__PURE__*/function () {
       inverted: "^"
     };
   }
-  _createClass(LoopModule, [{
+  return _createClass(LoopModule, [{
     key: "optionsTransformer",
     value: function optionsTransformer(opts, docxtemplater) {
       this.docxtemplater = docxtemplater;
@@ -3029,7 +3054,6 @@ var LoopModule = /*#__PURE__*/function () {
       };
     }
   }]);
-  return LoopModule;
 }();
 module.exports = function () {
   return wrapper(new LoopModule());
@@ -3037,23 +3061,23 @@ module.exports = function () {
 
 /***/ }),
 
-/***/ 182:
+/***/ 60:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor); } }
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var traits = __webpack_require__(505);
-var _require = __webpack_require__(557),
+var traits = __webpack_require__(536);
+var _require = __webpack_require__(207),
   isContent = _require.isContent;
-var _require2 = __webpack_require__(257),
+var _require2 = __webpack_require__(946),
   throwRawTagShouldBeOnlyTextInParagraph = _require2.throwRawTagShouldBeOnlyTextInParagraph,
   getInvalidRawXMLValueException = _require2.getInvalidRawXMLValueException;
 var moduleName = "rawxml";
-var wrapper = __webpack_require__(223);
+var wrapper = __webpack_require__(899);
 function getInner(_ref) {
   var part = _ref.part,
     left = _ref.left,
@@ -3080,7 +3104,7 @@ var RawXmlModule = /*#__PURE__*/function () {
     this.name = "RawXmlModule";
     this.prefix = "@";
   }
-  _createClass(RawXmlModule, [{
+  return _createClass(RawXmlModule, [{
     key: "optionsTransformer",
     value: function optionsTransformer(options, docxtemplater) {
       this.fileTypeConfig = docxtemplater.fileTypeConfig;
@@ -3143,7 +3167,6 @@ var RawXmlModule = /*#__PURE__*/function () {
       };
     }
   }]);
-  return RawXmlModule;
 }();
 module.exports = function () {
   return wrapper(new RawXmlModule());
@@ -3151,24 +3174,24 @@ module.exports = function () {
 
 /***/ }),
 
-/***/ 163:
+/***/ 307:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor); } }
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var wrapper = __webpack_require__(223);
-var _require = __webpack_require__(257),
+var wrapper = __webpack_require__(899);
+var _require = __webpack_require__(946),
   getScopeCompilationError = _require.getScopeCompilationError;
-var _require2 = __webpack_require__(557),
+var _require2 = __webpack_require__(207),
   utf8ToWord = _require2.utf8ToWord,
   hasCorruptCharacters = _require2.hasCorruptCharacters;
-var _require3 = __webpack_require__(257),
+var _require3 = __webpack_require__(946),
   getCorruptCharactersException = _require3.getCorruptCharactersException;
-var _require4 = __webpack_require__(731),
+var _require4 = __webpack_require__(356),
   settingsContentType = _require4.settingsContentType,
   coreContentType = _require4.coreContentType,
   appContentType = _require4.appContentType,
@@ -3184,7 +3207,7 @@ var Render = /*#__PURE__*/function () {
     this.recordRun = false;
     this.recordedRun = [];
   }
-  _createClass(Render, [{
+  return _createClass(Render, [{
     key: "optionsTransformer",
     value: function optionsTransformer(options, docxtemplater) {
       this.parser = docxtemplater.parser;
@@ -3325,7 +3348,6 @@ var Render = /*#__PURE__*/function () {
       }, []);
     }
   }]);
-  return Render;
 }();
 module.exports = function () {
   return wrapper(new Render());
@@ -3333,17 +3355,17 @@ module.exports = function () {
 
 /***/ }),
 
-/***/ 95:
+/***/ 522:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor); } }
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var wrapper = __webpack_require__(223);
-var _require = __webpack_require__(557),
+var wrapper = __webpack_require__(899);
+var _require = __webpack_require__(207),
   isTextStart = _require.isTextStart,
   isTextEnd = _require.isTextEnd,
   endsWith = _require.endsWith,
@@ -3373,7 +3395,7 @@ var SpacePreserve = /*#__PURE__*/function () {
     _classCallCheck(this, SpacePreserve);
     this.name = "SpacePreserveModule";
   }
-  _createClass(SpacePreserve, [{
+  return _createClass(SpacePreserve, [{
     key: "postparse",
     value: function postparse(postparsed, meta) {
       var chunk = [],
@@ -3438,7 +3460,6 @@ var SpacePreserve = /*#__PURE__*/function () {
       return parts;
     }
   }]);
-  return SpacePreserve;
 }();
 module.exports = function () {
   return wrapper(new SpacePreserve());
@@ -3446,14 +3467,14 @@ module.exports = function () {
 
 /***/ }),
 
-/***/ 190:
+/***/ 690:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
 function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
 function _slicedToArray(arr, i) { return _arrayWithHoles(arr) || _iterableToArrayLimit(arr, i) || _unsupportedIterableToArray(arr, i) || _nonIterableRest(); }
 function _nonIterableRest() { throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
@@ -3465,9 +3486,9 @@ function _unsupportedIterableToArray(o, minLen) { if (!o) return; if (typeof o =
 function _iterableToArray(iter) { if (typeof Symbol !== "undefined" && iter[Symbol.iterator] != null || iter["@@iterator"] != null) return Array.from(iter); }
 function _arrayWithoutHoles(arr) { if (Array.isArray(arr)) return _arrayLikeToArray(arr); }
 function _arrayLikeToArray(arr, len) { if (len == null || len > arr.length) len = arr.length; for (var i = 0, arr2 = new Array(len); i < len; i++) arr2[i] = arr[i]; return arr2; }
-var _require = __webpack_require__(557),
+var _require = __webpack_require__(207),
   wordToUtf8 = _require.wordToUtf8;
-var _require2 = __webpack_require__(3),
+var _require2 = __webpack_require__(650),
   match = _require2.match,
   getValue = _require2.getValue,
   getValues = _require2.getValues;
@@ -3651,7 +3672,7 @@ module.exports = parser;
 
 /***/ }),
 
-/***/ 393:
+/***/ 183:
 /***/ (function(module) {
 
 // convert string to array (typed, when possible)
@@ -3766,35 +3787,48 @@ module.exports = postrender;
 
 /***/ }),
 
-/***/ 3:
+/***/ 650:
 /***/ (function(module) {
 
+function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 var nbspRegex = new RegExp(String.fromCharCode(160), "g");
 function replaceNbsps(str) {
   return str.replace(nbspRegex, " ");
 }
 function match(condition, placeHolderContent) {
-  if (typeof condition === "string") {
+  var type = _typeof(condition);
+  if (type === "string") {
     return replaceNbsps(placeHolderContent.substr(0, condition.length)) === condition;
   }
   if (condition instanceof RegExp) {
     return condition.test(replaceNbsps(placeHolderContent));
   }
+  if (type === "function") {
+    return !!condition(placeHolderContent);
+  }
 }
 function getValue(condition, placeHolderContent) {
-  if (typeof condition === "string") {
+  var type = _typeof(condition);
+  if (type === "string") {
     return replaceNbsps(placeHolderContent).substr(condition.length);
   }
   if (condition instanceof RegExp) {
     return replaceNbsps(placeHolderContent).match(condition)[1];
   }
+  if (type === "function") {
+    return condition(placeHolderContent);
+  }
 }
 function getValues(condition, placeHolderContent) {
-  if (typeof condition === "string") {
+  var type = _typeof(condition);
+  if (type === "string") {
     return [placeHolderContent, replaceNbsps(placeHolderContent).substr(condition.length)];
   }
   if (condition instanceof RegExp) {
     return replaceNbsps(placeHolderContent).match(condition);
+  }
+  if (type === "function") {
+    return [placeHolderContent, condition(placeHolderContent)];
   }
 }
 module.exports = {
@@ -3805,19 +3839,13 @@ module.exports = {
 
 /***/ }),
 
-/***/ 89:
+/***/ 789:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
-function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
-function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
-function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
-function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var _require = __webpack_require__(257),
+var _require = __webpack_require__(946),
   throwUnimplementedTagType = _require.throwUnimplementedTagType,
   XTScopeParserError = _require.XTScopeParserError;
-var getResolvedId = __webpack_require__(709);
+var getResolvedId = __webpack_require__(830);
 function moduleRender(part, options) {
   var moduleRendered;
   for (var i = 0, l = options.modules.length; i < l; i++) {
@@ -3839,11 +3867,10 @@ function render(options) {
   var errors = [];
   var parts = compiled.map(function (part, i) {
     options.index = i;
+    options.resolvedId = getResolvedId(part, options);
     var moduleRendered;
     try {
-      moduleRendered = moduleRender(part, _objectSpread(_objectSpread({}, options), {}, {
-        resolvedId: getResolvedId(part, options)
-      }));
+      moduleRendered = moduleRender(part, options);
     } catch (e) {
       if (e instanceof XTScopeParserError) {
         errors.push(e);
@@ -3881,7 +3908,7 @@ module.exports = render;
 
 /***/ }),
 
-/***/ 207:
+/***/ 945:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
@@ -3894,9 +3921,9 @@ function _arrayLikeToArray(arr, len) { if (len == null || len > arr.length) len 
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
 function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var getResolvedId = __webpack_require__(709);
+var getResolvedId = __webpack_require__(830);
 function moduleResolve(part, options) {
   var moduleResolved;
   for (var i = 0, l = options.modules.length; i < l; i++) {
@@ -3921,7 +3948,6 @@ function resolve(options) {
   return Promise.all(compiled.filter(function (part) {
     return ["content", "tag"].indexOf(part.type) === -1;
   }).reduce(function (promises, part) {
-    options.resolvedId = getResolvedId(part, options);
     var moduleResolved = moduleResolve(part, _objectSpread(_objectSpread({}, options), {}, {
       resolvedId: getResolvedId(part, options)
     }));
@@ -3969,20 +3995,20 @@ module.exports = resolve;
 
 /***/ }),
 
-/***/ 919:
+/***/ 779:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor); } }
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var _require = __webpack_require__(257),
+var _require = __webpack_require__(946),
   getScopeParserExecutionError = _require.getScopeParserExecutionError;
-var _require2 = __webpack_require__(287),
+var _require2 = __webpack_require__(320),
   last = _require2.last;
-var _require3 = __webpack_require__(557),
+var _require3 = __webpack_require__(207),
   concatArrays = _require3.concatArrays;
 function find(list, fn) {
   var length = list.length >>> 0;
@@ -4095,7 +4121,7 @@ var ScopeManager = /*#__PURE__*/function () {
     this.resolved = options.resolved;
     this.cachedParsers = options.cachedParsers;
   }
-  _createClass(ScopeManager, [{
+  return _createClass(ScopeManager, [{
     key: "loopOver",
     value: function loopOver(tag, functor, inverted, meta) {
       return this.loopOverValue(this.getValue(tag, meta), functor, inverted);
@@ -4189,7 +4215,6 @@ var ScopeManager = /*#__PURE__*/function () {
       });
     }
   }]);
-  return ScopeManager;
 }();
 module.exports = function (options) {
   options.scopePath = [];
@@ -4203,7 +4228,7 @@ module.exports = function (options) {
 
 /***/ }),
 
-/***/ 505:
+/***/ 536:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
@@ -4220,9 +4245,9 @@ function _arrayWithHoles(arr) { if (Array.isArray(arr)) return arr; }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
 function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var _require = __webpack_require__(557),
+var _require = __webpack_require__(207),
   getRightOrNull = _require.getRightOrNull,
   getRight = _require.getRight,
   getLeft = _require.getLeft,
@@ -4233,7 +4258,7 @@ var _require = __webpack_require__(557),
   isContent = _require.isContent,
   last = _require.last,
   first = _require.first;
-var _require2 = __webpack_require__(257),
+var _require2 = __webpack_require__(946),
   XTTemplateError = _require2.XTTemplateError,
   throwExpandNotFound = _require2.throwExpandNotFound,
   getLoopPositionProducesInvalidXMLError = _require2.getLoopPositionProducesInvalidXMLError;
@@ -4483,7 +4508,7 @@ function expandToOne(postparsed, options) {
     if (part.type === "placeholder" && part.module === options.moduleName &&
     // The part.subparsed check is used to fix this github issue :
     // https://github.com/open-xml-templating/docxtemplater/issues/671
-    !part.subparsed) {
+    !part.subparsed && !part.expanded) {
       try {
         var limit = getExpandLimit(part, i, postparsed, options);
         if (!limit) {
@@ -4551,7 +4576,7 @@ module.exports = {
 
 /***/ }),
 
-/***/ 287:
+/***/ 320:
 /***/ (function(module) {
 
 function last(a) {
@@ -4567,10 +4592,10 @@ module.exports = {
 
 /***/ }),
 
-/***/ 465:
+/***/ 367:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
-var _require = __webpack_require__(557),
+var _require = __webpack_require__(207),
   pregMatchAll = _require.pregMatchAll;
 module.exports = function xmlMatcher(content, tagsXmlArray) {
   var res = {
@@ -4584,25 +4609,25 @@ module.exports = function xmlMatcher(content, tagsXmlArray) {
 
 /***/ }),
 
-/***/ 827:
+/***/ 245:
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor); } }
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : String(i); }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
-var _require = __webpack_require__(557),
+var _require = __webpack_require__(207),
   wordToUtf8 = _require.wordToUtf8,
   convertSpaces = _require.convertSpaces;
-var xmlMatcher = __webpack_require__(465);
-var Lexer = __webpack_require__(303);
-var Parser = __webpack_require__(190);
-var _render = __webpack_require__(89);
-var postrender = __webpack_require__(393);
-var resolve = __webpack_require__(207);
-var joinUncorrupt = __webpack_require__(127);
+var xmlMatcher = __webpack_require__(367);
+var Lexer = __webpack_require__(263);
+var Parser = __webpack_require__(690);
+var _render = __webpack_require__(789);
+var postrender = __webpack_require__(183);
+var resolve = __webpack_require__(945);
+var joinUncorrupt = __webpack_require__(208);
 function _getFullText(content, tagsXmlArray) {
   var matcher = xmlMatcher(content, tagsXmlArray);
   var result = matcher.matches.map(function (match) {
@@ -4625,7 +4650,7 @@ module.exports = /*#__PURE__*/function () {
       }
     });
   }
-  _createClass(XmlTemplater, [{
+  return _createClass(XmlTemplater, [{
     key: "resolveTags",
     value: function resolveTags(tags) {
       var _this2 = this;
@@ -4820,7 +4845,6 @@ module.exports = /*#__PURE__*/function () {
       return this;
     }
   }]);
-  return XmlTemplater;
 }();
 
 /***/ })
@@ -4856,7 +4880,7 @@ module.exports = /*#__PURE__*/function () {
 /******/ 	// startup
 /******/ 	// Load entry module and return exports
 /******/ 	// This entry module is referenced by other modules so it can't be inlined
-/******/ 	var __webpack_exports__ = __webpack_require__(380);
+/******/ 	var __webpack_exports__ = __webpack_require__(807);
 /******/ 	window.docxtemplater = __webpack_exports__;
 /******/ 	
 /******/ })()
