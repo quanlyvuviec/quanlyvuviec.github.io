@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Quản Lý Vụ Việc v6</title>
+  <title>Quản Lý Vụ Việc Phường Xã</title>
   <!--
   ============================================================
   QLVV v6 OPTIMIZED — Dựa trên RELEASE16_4 + Zustand + React Query + Virtuoso
@@ -1017,7 +1017,7 @@
   <script type="text/javascript">
     // ==================== CONSTANTS ====================
     const DB_NAME = 'CaseManagementDB';
-    const DB_VERSION = 5;
+    const DB_VERSION = 6; // tăng từ 5 → 6 để force tạo lại auditLogs store nếu chưa có
     const CASES_STORE = 'cases';
     const USERS_STORE = 'users';
     const LISTS_STORE = 'lists';
@@ -1730,6 +1730,12 @@
     async function _idbSaveAuditLog(entry) {
       try {
         const d = await openDB();
+        // Guard: kiểm tra store tồn tại trước khi transaction
+        // (xảy ra khi browser đang dùng IDB version cũ chưa upgrade)
+        if (!d.objectStoreNames.contains(AUDIT_STORE)) {
+          console.warn('[Audit] store chua ton tai — bo qua, se co sau khi reload.');
+          return;
+        }
         const tx = d.transaction(AUDIT_STORE, 'readwrite');
         tx.objectStore(AUDIT_STORE).add(entry);
         return new Promise((r, j) => { tx.oncomplete = r; tx.onerror = e => j(e.target.error); });
@@ -1739,6 +1745,7 @@
     async function _idbLoadAuditLogs(limit = 300) {
       try {
         const d = await openDB();
+        if (!d.objectStoreNames.contains(AUDIT_STORE)) return [];
         const tx = d.transaction(AUDIT_STORE, 'readonly');
         const req = tx.objectStore(AUDIT_STORE).getAll();
         return new Promise((r, j) => {
@@ -1754,6 +1761,7 @@
     async function _idbClearAuditLogs() {
       try {
         const d = await openDB();
+        if (!d.objectStoreNames.contains(AUDIT_STORE)) return;
         const tx = d.transaction(AUDIT_STORE, 'readwrite');
         tx.objectStore(AUDIT_STORE).clear();
         return new Promise((r, j) => { tx.oncomplete = r; tx.onerror = j; });
@@ -4555,51 +4563,89 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
     };
 
     // ==================== UNIT SETTINGS MODAL ====================
+    // FIX: Không dùng sub-component Row bên trong UnitSettingsModal.
+    // Lý do: mỗi keystroke → setSettings → re-render → Row bị tạo lại
+    // (new reference) → React unmount+remount input → mất focus.
+    // Giải pháp: render input trực tiếp (inline) — không có component trung gian.
     const UnitSettingsModal = ({ onClose }) => {
       const [settings, setSettings] = React.useState(getUnitSettings());
-      const handleChange = (k, v) => setSettings(prev => ({...prev, [k]: v}));
+
+      // onChange dùng name attribute — một handler duy nhất cho tất cả input
+      const handleChange = React.useCallback((e) => {
+        const { name, value } = e.target;
+        setSettings(prev => ({ ...prev, [name]: value }));
+      }, []);
+
       const handleSave = () => { saveUnitSettings(settings); onClose(); };
-      const Row = ({label, k}) => (
-        <div className="form-group">
-          <label className="form-label">{label}</label>
-          <input type="text" className="form-control" value={settings[k]||''} onChange={e=>handleChange(k,e.target.value)} />
-        </div>
-      );
+
       return (
         <div className="modal-overlay">
           <div className="modal-box" style={{width:'620px', maxHeight:'90vh', overflowY:'auto'}}>
             <div className="modal-header" style={{background:'linear-gradient(135deg,#0f2044,#1a3a6e)'}}>
-              ⚙️ Cài Đặt Thông Tin Đơn Vị
-              <button className="modal-close" onClick={onClose}>×</button>
+              Cai Dat Thong Tin Don Vi
+              <button className="modal-close" onClick={onClose}>x</button>
             </div>
             <div className="modal-body">
-              <p style={{fontSize:'12px',color:'#64748b',marginBottom:'12px'}}>Thông tin này được sử dụng khi xuất Word mẫu. Lưu 1 lần, dùng mãi.</p>
+              <p style={{fontSize:'12px',color:'#64748b',marginBottom:'12px'}}>Thong tin nay duoc su dung khi xuat Word mau. Luu 1 lan, dung mai.</p>
               <div className="form-row" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-                <Row label="Loại tỉnh/thành" k="loaiTinh" />
-                <Row label="Loại xã/phường" k="loaiXa" />
-                <Row label="Địa danh" k="diaDanh" />
+                <div className="form-group">
+                  <label className="form-label">Loai tinh/thanh</label>
+                  <input type="text" name="loaiTinh" className="form-control" value={settings.loaiTinh||''} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Loai xa/phuong</label>
+                  <input type="text" name="loaiXa" className="form-control" value={settings.loaiXa||''} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Dia danh</label>
+                  <input type="text" name="diaDanh" className="form-control" value={settings.diaDanh||''} onChange={handleChange} />
+                </div>
               </div>
               <div className="form-row">
-                <Row label="Đơn vị" k="donVi" />
-                <Row label="Tên trạm y tế" k="tenTramYTe" />
+                <div className="form-group">
+                  <label className="form-label">Don vi</label>
+                  <input type="text" name="donVi" className="form-control" value={settings.donVi||''} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Ten tram y te</label>
+                  <input type="text" name="tenTramYTe" className="form-control" value={settings.tenTramYTe||''} onChange={handleChange} />
+                </div>
               </div>
               <hr className="section-divider" />
               <div className="form-row">
-                <Row label="Họ tên BCH" k="hoTenBCH" />
-                <Row label="Chức vụ BCH" k="chucVuBCH" />
+                <div className="form-group">
+                  <label className="form-label">Ho ten BCH</label>
+                  <input type="text" name="hoTenBCH" className="form-control" value={settings.hoTenBCH||''} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Chuc vu BCH</label>
+                  <input type="text" name="chucVuBCH" className="form-control" value={settings.chucVuBCH||''} onChange={handleChange} />
+                </div>
               </div>
               <div className="form-row">
-                <Row label="Họ tên ĐTV" k="hoTenDTV" />
-                <Row label="Chức vụ ĐTV" k="chucVuDTV" />
+                <div className="form-group">
+                  <label className="form-label">Ho ten DTV</label>
+                  <input type="text" name="hoTenDTV" className="form-control" value={settings.hoTenDTV||''} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Chuc vu DTV</label>
+                  <input type="text" name="chucVuDTV" className="form-control" value={settings.chucVuDTV||''} onChange={handleChange} />
+                </div>
               </div>
               <div className="form-row">
-                <Row label="Họ tên cán bộ lập BB" k="hoTenCanBoLam" />
-                <Row label="Chức vụ cán bộ lập BB" k="chucVuCanBoLam" />
+                <div className="form-group">
+                  <label className="form-label">Ho ten can bo lap BB</label>
+                  <input type="text" name="hoTenCanBoLam" className="form-control" value={settings.hoTenCanBoLam||''} onChange={handleChange} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Chuc vu can bo lap BB</label>
+                  <input type="text" name="chucVuCanBoLam" className="form-control" value={settings.chucVuCanBoLam||''} onChange={handleChange} />
+                </div>
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-gray" onClick={onClose}>Hủy</button>
-              <button className="btn btn-success" onClick={handleSave}>💾 Lưu cài đặt</button>
+              <button className="btn btn-gray" onClick={onClose}>Huy</button>
+              <button className="btn btn-success" onClick={handleSave}>Luu cai dat</button>
             </div>
           </div>
         </div>
@@ -6228,6 +6274,8 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       handlingMethodsList 
     }) => {
       const [previousValues, setPreviousValues] = useState({});
+      // [FIX-SECURE] Snapshot giá trị bảo mật tại thời điểm mở form đối tượng.
+      const originalObjSecureValues = useRef({});
       const [currentBehavior, setCurrentBehavior] = useState('');
       const [filteredBehaviors, setFilteredBehaviors] = useState(caseTypesList);
       const [bbActiveTab, setBbActiveTab] = useState('info');
@@ -6574,25 +6622,37 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         }
       }, [objectData, requestSecure]);
 
+      // [FIX-SECURE] Khi editingIndex thay đổi (mở đối tượng mới) → reset snapshot.
+      const prevEditingIndexRef = useRef(undefined);
+      useEffect(() => {
+        if (prevEditingIndexRef.current !== editingIndex) {
+          prevEditingIndexRef.current = editingIndex;
+          const snap = {};
+          Object.keys(SECURE_FIELDS).forEach(function(k) {
+            if (objectData[k] && String(objectData[k]).trim()) snap[k] = objectData[k];
+          });
+          originalObjSecureValues.current = snap;
+        }
+      }, [editingIndex, objectData]);
+
       const handleObjectInputChange = useCallback((e) => {
         const { name, value } = e.target;
-        // Trường bảo mật: nếu đã có dữ liệu → yêu cầu xác thực mật khẩu
-        if (SECURE_FIELDS[name]) {
-          const current = objectData[name];
-          if (current && String(current).trim()) {
-            requestSecure(SECURE_FIELDS[name], () =>
-              setObjectData(prev => {
-                const nd = { ...prev };
-                if (['birthDate','issueDate','invitationDate','ngayChuyen','reportDate','decisionDate','prosecutionDateObj','custodyDecisionDate','detentionDecisionDate'].includes(name)) {
-                  nd[name] = DateUtils.parseFromVietnamese(value);
-                } else {
-                  nd[name] = value;
-                }
-                return nd;
-              })
-            );
-            return;
-          }
+        // [FIX-SECURE] Chỉ trigger khi field có dữ liệu GỐC (snapshot lúc mở form).
+        // Xóa key sau khi trigger → các ký tự tiếp không hỏi lại mật khẩu.
+        if (SECURE_FIELDS[name] && originalObjSecureValues.current[name]) {
+          delete originalObjSecureValues.current[name];
+          requestSecure(SECURE_FIELDS[name], () =>
+            setObjectData(prev => {
+              const nd = { ...prev };
+              if (['birthDate','issueDate','invitationDate','ngayChuyen','reportDate','decisionDate','prosecutionDateObj','custodyDecisionDate','detentionDecisionDate'].includes(name)) {
+                nd[name] = DateUtils.parseFromVietnamese(value);
+              } else {
+                nd[name] = value;
+              }
+              return nd;
+            })
+          );
+          return;
         }
         
         setObjectData(prev => {
@@ -7712,7 +7772,9 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       caseTypesList, 
       handlingMethodsList,
       hasUnsavedChanges,
-      setEditGate
+      setHasUnsavedChanges,
+      setEditGate,
+      addToast,
     }) => {
       const [typeInput, setTypeInput] = useState(caseData.type.join(', '));
       const [currentType, setCurrentType] = useState('');
@@ -7722,6 +7784,9 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const dateReceivedRef = useRef(null);
       const ngayKetThucRef = useRef(null);
       const investigationConclusionDateRef = useRef(null);
+      // [FIX-SECURE] Lưu snapshot giá trị các trường bảo mật tại thời điểm form load.
+      // Dùng để xác định "trường này đã có dữ liệu thật sự" — tránh trigger lại sau mỗi ký tự.
+      const originalSecureValues = useRef({});
       const prosecutionDateRef = useRef(null);
       const penaltyDateRef = useRef(null);
       const transferDateRef = useRef(null);
@@ -7826,11 +7891,30 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         };
       }, [caseData.investigationResult]);
       
+      // [FIX-SECURE] Khi caseData thay đổi (load case mới hoặc reset form),
+      // capture lại snapshot các SECURE_FIELDS vào ref.
+      // Dùng editingCaseId làm dependency key — chỉ reset khi chuyển sang vụ khác.
+      const prevEditingCaseIdRef = useRef(null);
+      useEffect(() => {
+        // Khi mở form với vụ mới (editingCaseId thay đổi) → reset snapshot
+        if (prevEditingCaseIdRef.current !== editingCaseId) {
+          prevEditingCaseIdRef.current = editingCaseId;
+          const snap = {};
+          Object.keys(SECURE_FIELDS).forEach(function(k) {
+            if (caseData[k] && String(caseData[k]).trim()) snap[k] = caseData[k];
+          });
+          originalSecureValues.current = snap;
+        }
+      }, [editingCaseId, caseData]);
+
       const handleInputChange = useCallback((e) => {
         const { name, value } = e.target;
-        // C-2 FIX: Đọc caseData trực tiếp từ closure — phải có caseData trong deps
-        // để SECURE_FIELDS check không bị stale (trước đây deps=[] → luôn thấy caseData rỗng)
-        if (SECURE_FIELDS[name] && caseData[name] && String(caseData[name]).trim()) {
+        // [FIX-SECURE] Chỉ trigger requestSecure khi field có dữ liệu GỐC (lúc mở form).
+        // Không dùng caseData[name] vì sau confirm lần 1, field đã có ký tự mới
+        // → mọi ký tự tiếp theo đều trigger lại (bug cũ).
+        if (SECURE_FIELDS[name] && originalSecureValues.current[name]) {
+          // Xóa khỏi snapshot ngay sau khi mở modal — những lần gõ sau không trigger nữa
+          delete originalSecureValues.current[name];
           requestSecure(SECURE_FIELDS[name], () => setCaseData(prev => ({ ...prev, [name]: value })));
           return;
         }
@@ -11943,7 +12027,9 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                 caseTypesList={caseTypesList}
                 handlingMethodsList={handlingMethodsList}
                 hasUnsavedChanges={hasUnsavedChanges}
+                setHasUnsavedChanges={setHasUnsavedChanges}
                 setEditGate={setEditGate}
+                addToast={addToast}
               />
             ) : viewMode === 'tinhHan' ? (
               <TinhHanComponent cases={cases} />
