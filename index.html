@@ -661,7 +661,7 @@
 
     /* ============ PHOTO CONTAINER ============ */
     .photo-container {
-      width: 113px; height: 151px;
+      width: 160px; height: 213px;
       border: 2px dashed #e2e8f0;
       border-radius: 8px;
       overflow: hidden;
@@ -669,8 +669,9 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.10);
     }
-    .photo-container img { width: 100%; height: 100%; object-fit: cover; }
+    .photo-container img { width: 100%; height: 100%; object-fit: cover; image-rendering: high-quality; }
     .photo-placeholder { text-align: center; color: #94a3b8; font-size: 11px; padding: 10px; }
 
     /* ============ PAGINATION ============ */
@@ -6782,10 +6783,10 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         const file = e.target.files[0];
         if (!file) return;
         const field = photoField || 'photo';
-        // [COMPRESS] Resize về 113×151 px + JPEG quality 0.65
-        // Giảm từ ~30–80 KB/ảnh xuống ~3–5 KB — tiết kiệm ~95% Firestore bandwidth
+        // [COMPRESS] Resize về 320×426 px (tỷ lệ 3x4 chuẩn) + JPEG quality 0.82
+        // Tăng chất lượng ảnh đáng kể, vẫn giữ dung lượng hợp lý ~15-25 KB/ảnh
         try {
-          const base64 = await compressImage(file, 113, 151, 0.65);
+          const base64 = await compressImage(file, 320, 426, 0.82);
           setObjectData(prev => ({ ...prev, [field]: base64 }));
         } catch(err) {
           console.warn('[handlePhotoUpload] Nén ảnh thất bại, dùng ảnh gốc:', err);
@@ -7443,8 +7444,16 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   <div className="flex items-center">
                     <div className="flex-1">
                       <label className="form-label">Hành vi</label>
-                      <input type="text" value={currentBehavior} onChange={handleCurrentBehaviorChange} placeholder="Nhập hành vi để tìm kiếm" className="form-control" list="behaviorList" />
-                      <datalist id="behaviorList">{filteredBehaviors.map((behavior, index) => (<option key={index} value={behavior} />))}</datalist>
+                      <div style={{position:'relative'}}>
+                        <input type="text" value={currentBehavior} onChange={handleCurrentBehaviorChange} onKeyDown={(e)=>{if(e.key==='Enter'){e.preventDefault();addBehavior();}}} placeholder="Nhập hành vi, Enter để thêm" className="form-control" autoComplete="off" />
+                        {currentBehavior && filteredBehaviors.length > 0 && (
+                          <div style={{position:'absolute',top:'100%',left:0,right:0,background:'#fff',border:'1px solid #cbd5e1',borderRadius:'6px',zIndex:100,maxHeight:'180px',overflowY:'auto',boxShadow:'0 4px 12px rgba(0,0,0,0.12)'}}>
+                            {filteredBehaviors.slice(0,10).map((b,i)=>(
+                              <div key={i} onMouseDown={(e)=>{e.preventDefault();handleCurrentBehaviorChange({target:{value:b}});setTimeout(addBehavior,50);}} style={{padding:'7px 12px',fontSize:'12px',cursor:'pointer',borderBottom:'1px solid #f1f5f9'}} onMouseEnter={e=>e.target.style.background='#eff6ff'} onMouseLeave={e=>e.target.style.background=''}>{b}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       <button className="bg-blue-500 text-white px-4 py-2 rounded mt-2" onClick={addBehavior} disabled={!currentBehavior}>Thêm</button>
                       <div className="mt-2">{objectData.behavior && objectData.behavior.map((behavior, index) => (<span key={index} className="inline-block bg-gray-200 rounded px-2 py-1 mr-2 mb-2">{behavior}<button className="ml-2 text-red-500" onClick={() => removeBehavior(index)}>×</button></span>))}</div>
                     </div>
@@ -10357,7 +10366,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       useEffect(() => {
         if (!firestoreDB) return;
         let unsubscribe = null;
-        let isFirstSnapshot = true; // bỏ qua snapshot đầu tiên (initApp đã load rồi)
+        let isFirstSnapshot = true; // snapshot đầu tiên: auto-merge thông minh không hỏi conflict
 
         let retryCount = 0;
         function setupListener() {
@@ -10367,8 +10376,11 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               .onSnapshot(
                 { includeMetadataChanges: false },
                 async function(snapshot) {
-                  // Bỏ qua snapshot đầu tiên khi mount — initApp đã load dữ liệu rồi
-                  if (isFirstSnapshot) { isFirstSnapshot = false; return; }
+                  // Lần đầu tiên (khi mount): vẫn xử lý nhưng KHÔNG hiện conflict dialog
+                  // Chỉ tự động lấy bản cloud nếu cloud mới hơn rõ ràng
+                  const suppressConflictDialog = isFirstSnapshot;
+                  if (isFirstSnapshot) { isFirstSnapshot = false; }
+
                   // Chỉ xử lý thay đổi từ server, bỏ qua local cache
                   if (snapshot.metadata.fromCache) return;
                   if (snapshot.empty) return;
@@ -10392,8 +10404,9 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                     await _idbSaveCases(merged).catch(function() {});
                     if (syncStatusCallback) syncStatusCallback('synced');
 
-                    // Nếu có conflict → thông báo cho React component hiển thị dialog
-                    if (conflicts.length > 0 && typeof _conflictDialogCallback === 'function') {
+                    // Nếu có conflict → chỉ hiển thị dialog nếu KHÔNG phải lần mount đầu tiên
+                    // Lần đầu: tự động dùng cloud (đã được merge ở mergeWithConflictDetection)
+                    if (conflicts.length > 0 && !suppressConflictDialog && typeof _conflictDialogCallback === 'function') {
                       _conflictDialogCallback(conflicts);
                     }
                   } catch (e) {
