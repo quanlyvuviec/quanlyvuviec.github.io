@@ -3255,6 +3255,7 @@ const _buildTemplateData = (caseObj, objList, selectedObjIndices, unitSettings, 
       [p+'ngay_qd_xphc_short']: fmtDateShort(dt.decisionDate || dt.qdXphcNgay),
       [p+'hinh_thuc_xp']:       dt.penaltyForm || '',
       [p+'loai_toi_pham']:      dt.crimeType || '',
+      [p+'hanh_vi_xphc']:       dt.behaviorText || (Array.isArray(dt.behavior) ? dt.behavior.join(', ') : dt.behavior) || '',
     };
   };
 
@@ -6659,7 +6660,10 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         setObjectData(prev => {
           const newData = { ...prev };
           
-          if (name === 'behavior') {
+          if (name === 'behaviorText') {
+            // XPHC hành vi: lưu dạng plain string, không split
+            newData[name] = value;
+          } else if (name === 'behavior') {
             const selectedBehaviors = value.split(',').map(b => b.trim()).filter(b => b);
             newData[name] = selectedBehaviors;
           } else if (['birthDate', 'issueDate', 'invitationDate', 'ngayChuyen', 'reportDate', 'decisionDate', 'prosecutionDateObj', 'custodyDecisionDate', 'detentionDecisionDate'].includes(name)) {
@@ -7401,7 +7405,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                   <div className="flex items-center">
                     <div className="flex-1">
                       <label className="form-label">Hành vi vi phạm</label>
-                      <input type="text" name="behavior" value={objectData.behavior || ''} onChange={handleObjectInputChange} placeholder="Nhập hành vi" className="form-control" />
+                      <input type="text" name="behaviorText" value={objectData.behaviorText || (Array.isArray(objectData.behavior) ? objectData.behavior.join(', ') : objectData.behavior) || ''} onChange={handleObjectInputChange} placeholder="Nhập hành vi vi phạm" className="form-control" autoComplete="off" />
                     </div>
                     {renderUndoButton('behavior')}
                   </div>
@@ -9708,7 +9712,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       idNumber: '', issueDate: '', issuePlace: '', education: '', occupation: '',
       workplace: '', permanentAddress: '', phoneNumber: '', temporaryResidence: '',
       currentResidence: '', familyBackground: '', relationship: '', invitationDate: '',
-      handlingMethod: '', behavior: [], penaltyForm: '',
+      handlingMethod: '', behavior: [], penaltyForm: '', behaviorText: '',
       administrativeRecordNumber: '', administrativeDecisionNumber: '',
       reportDate: '', decisionDate: '', prosecutionDateObj: '', prosecutionDecisionObj: '',
       custodyDecisionDate: '', custodyDecisionNumber: '', custodyExtensionCount: '0',
@@ -10392,7 +10396,18 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                     });
                     if (cloudCases.length === 0) return; // tránh xóa trắng khi offline
 
-                    const localCases = await _idbLoadCases().catch(function() { return []; });
+                    // Lần đầu: dùng cases hiện tại trong store (đã load xong từ initApp)
+                    // thay vì đọc lại IDB — tránh race condition khi initApp chưa ghi IDB xong
+                    let localCases;
+                    if (suppressConflictDialog) {
+                      localCases = window.AppStore?.useCaseStore ? window.AppStore.useCaseStore.getState().cases : [];
+                      // Fallback về IDB nếu store chưa có data
+                      if (!localCases || localCases.length === 0) {
+                        localCases = await _idbLoadCases().catch(function() { return []; });
+                      }
+                    } else {
+                      localCases = await _idbLoadCases().catch(function() { return []; });
+                    }
                     const localPhotoMap = _buildLocalPhotoMap(localCases);
 
                     // ── Conflict Detection ──────────────────────────────
