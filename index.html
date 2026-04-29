@@ -3180,6 +3180,7 @@ const _buildTemplateData = (caseObj, objList, selectedObjIndices, unitSettings, 
       [p+'ngay_sinh_short']:    fmtDateShort(dt.birthDate),
       [p+'so_dien_thoai']:      dt.phoneNumber || '',
       [p+'que_quan']:           dt.hometown || '',
+      [p+'tai']:                dt.birthPlace || '',
       [p+'noi_thuong_tru']:     dt.permanentAddress || '',
       [p+'noi_tam_tru']:        dt.temporaryResidence || '',
       [p+'noi_o_hien_tai']:     dt.currentResidence || '',
@@ -6283,9 +6284,9 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       const [bbActiveTab, setBbActiveTab] = useState('info');
       const [wordImporting, setWordImporting] = useState(false);
       const [showHandlingDetails, setShowHandlingDetails] = useState(true);
-      const PRESET_OCCUPATIONS = ['Không','Buôn bán','Lao động tự do','Kinh doanh','Công nhân','Bảo vệ','Nhân viên văn phòng','Kỹ sư','Làm nông','Hưu','Nội trợ'];
+      const PRESET_OCCUPATIONS = ['Không','Buôn bán','Lao động tự do','Kinh doanh','Công nhân','Bảo vệ','Nhân viên văn phòng','Kỹ sư','Làm nông','Hưu','Nội trợ','Sinh viên','Học sinh'];
       const [isCustomOccupation, setIsCustomOccupation] = useState(
-        () => !!objectData.occupation && !['Không','Buôn bán','Lao động tự do','Kinh doanh','Công nhân','Bảo vệ','Nhân viên văn phòng','Kỹ sư','Làm nông','Hưu','Nội trợ'].includes(objectData.occupation)
+        () => !!objectData.occupation && !['Không','Buôn bán','Lao động tự do','Kinh doanh','Công nhân','Bảo vệ','Nhân viên văn phòng','Kỹ sư','Làm nông','Hưu','Nội trợ','Sinh viên','Học sinh'].includes(objectData.occupation)
       );
       // Đồng bộ isCustomOccupation khi occupation thay đổi từ bên ngoài (vd: import Word)
       useEffect(() => {
