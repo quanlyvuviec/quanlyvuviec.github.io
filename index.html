@@ -1663,7 +1663,7 @@
 
     async function deleteCaseFromDB(caseId) {
       try { await _idbDeleteCase(caseId); } catch(e) {}
-      if (firestoreDB) _firestoreDeleteCase(caseId).catch(() => {});
+      if (firestoreDB) _firestoreSoftDeleteCase(caseId).catch(() => {});
     }
 
     async function saveUserToDB(user) {
@@ -10820,7 +10820,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         // 2. Update React state (bridge)
         setCases(prev => prev.filter(c => c.id !== deleteCaseId));
         // 3. Xóa thực sự khỏi IndexedDB và Firestore
-        deleteCaseFromDB(deleteCaseId).catch(e => console.warn('Delete from DB failed:', e));
+        softDeleteCaseInDB(deleteCaseId).catch(e => console.warn('Delete from DB failed:', e));
         setShowConfirm(false);
         setDeleteCaseId(null);
         addToast('Đã xóa vụ việc thành công!', 'success');
