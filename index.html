@@ -12306,7 +12306,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                     
                     {/* ── [VIRTUALIZATION] Virtual Table — chỉ render rows đang hiển thị ── */}
                     {(() => {
-                      const ongoingCases = paginatedCases.filter(c => c.status !== 'hoàn thành');
+                      const ongoingCases = filteredCases.filter(c => c.status !== 'hoàn thành');
                       const renderOngoingRow = (c, index) => {
                         const isUrgent = isInvestigationRedInCase(c) || isCustodyRedInCase(c) || isDetentionRedInCase(c);
                         return (
@@ -12391,9 +12391,9 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                             </table>
                           </div></div>
                           <div className="pagination">
-                            <button className="btn btn-gray btn-sm" disabled={currentPage === 1} onClick={() => setCurrentPage(currentPage - 1)}>← Trước</button>
+                            <button className="btn btn-gray btn-sm" disabled={currentPage === 1} onClick={() => { setCurrentPage(currentPage - 1); }}>← Trước</button>
                             <span className="pagination-info">Trang <strong>{currentPage}</strong> / <strong>{Math.ceil(ongoingCases.length/itemsPerPage)||1}</strong> ({ongoingCases.length} vụ)</span>
-                            <button className="btn btn-gray btn-sm" disabled={currentPage >= Math.ceil(ongoingCases.length/itemsPerPage)} onClick={() => setCurrentPage(currentPage + 1)}>Sau →</button>
+                            <button className="btn btn-gray btn-sm" disabled={currentPage >= Math.ceil(ongoingCases.length/itemsPerPage)} onClick={() => { setCurrentPage(currentPage + 1); }}>Sau →</button>
                           </div>
                         </div>
                       );
