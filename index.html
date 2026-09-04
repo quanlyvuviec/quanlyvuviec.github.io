@@ -2894,18 +2894,19 @@ const parseVietnameseBioText = (text) => {
         const occ = v.split(/[;,]\s*n[oơ]i\s+l[aà]m/i)[0].split(/[;,]\s*ch[uứ]c\s+v[uụ]/i)[0].trim();
         data.occupation = occ.replace(/[;,].*$/,'').trim();
       }
-      // Cùng dòng có "nơi làm việc" → trích luôn
-      if (!data.workplace && /n[oơ]i\s+l[aà]m\s+vi[eệ]c/i.test(ll)) {
-        const wp = afterKey(line,'Nơi làm việc');
-        if (wp) data.workplace = wp.replace(/[;,].*$/,'').trim();
+      // Cùng dòng có "nơi làm việc:" → trích luôn (CHỈ khi có dấu hai chấm sau "nơi làm việc",
+      // tránh chèn nhầm dữ liệu khi văn bản chỉ có nhãn "nơi làm việc" mà không có giá trị)
+      if (!data.workplace) {
+        const wpm = line.match(/n[oơ]i\s+l[aà]m\s+vi[eệ]c\s*:\s*(.+)/i);
+        if (wpm && wpm[1].trim()) data.workplace = wpm[1].replace(/[;,].*$/,'').trim();
       }
       continue;
     }
 
-    // ── Nơi làm việc ──
+    // ── Nơi làm việc (dòng riêng) — CHỈ lấy khi có dấu ":" sau "nơi làm việc" ──
     if (/n[oơ]i\s+l[aà]m\s+vi[eệ]c/i.test(ll) && !data.workplace) {
-      const v = afterKey(line,'Nơi làm việc');
-      if (v) data.workplace = v;
+      const wpm = line.match(/n[oơ]i\s+l[aà]m\s+vi[eệ]c\s*:\s*(.+)/i);
+      if (wpm && wpm[1].trim()) data.workplace = wpm[1].trim();
       continue;
     }
 
@@ -2937,10 +2938,8 @@ const parseVietnameseBioText = (text) => {
       continue;
     }
 
-    // ── Tiền án ──
+    // ── Tiền án ── (KHÔNG tự động chèn vào trường "Tiền án" — theo yêu cầu, người dùng tự nhập)
     if (/ti[eề]n\s+[aá]n/i.test(ll) && !/ti[eề]n\s+s[uư]/i.test(ll)) {
-      const v = afterKey(line,'Tiền án','Tiền án tiền sự','Nhân thân');
-      if (v && !data.tienAn) data.tienAn = v.trim();
       continue;
     }
     // ── Tiền sự ──
@@ -2949,10 +2948,8 @@ const parseVietnameseBioText = (text) => {
       if (v && !data.tienSu) data.tienSu = v.trim();
       continue;
     }
-    // ── Nhân thân (fallback) ──
+    // ── Nhân thân ── (không dùng để tự động chèn vào "Tiền án" nữa)
     if (/nh[aâ]n\s+th[aâ]n/i.test(ll)) {
-      const v = afterKey(line,'Nhân thân');
-      if (v && !data.tienAn) data.tienAn = v.trim();
       continue;
     }
   }
@@ -4021,7 +4018,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
       "PC04"
     ];
     
-    const religions = ["Không", "Phật", "Công giáo"];
+    const religions = ["Không", "Phật", "Công giáo", "Đạo Cao đài", "Hồi giáo", "Hòa hảo"];
     const genders = ["Nam", "Nữ"];
     const issuePlaces = [
       "Cục cảnh sát QLHC về TTXH",
@@ -6524,7 +6521,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           const subParts = [];
           if (year) subParts.push("sinh năm: " + year);
           if (permanentAddr) subParts.push("nơi thường trú: " + permanentAddr);
-          if (currentAddr) subParts.push("nơi ở hiện tại: trú " + currentAddr);
+          if (currentAddr) subParts.push("nơi ở hiện tại: " + currentAddr);
           const generated = subParts.length > 0 ? name + " (" + subParts.join(", ") + ")" : name;
           setObjectData(prev => ({...prev, lyLichGon: generated}));
         }
@@ -6731,6 +6728,16 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
           originalObjSecureValues.current = snap;
         }
       }, [editingIndex, objectData]);
+
+      const toggleLoaiMaTuy = useCallback((type) => {
+        setObjectData(prev => {
+          const current = (prev.loaiMaTuy || '').split(';').map(s => s.trim()).filter(Boolean);
+          const next = current.includes(type)
+            ? current.filter(t => t !== type)
+            : [...current, type];
+          return { ...prev, loaiMaTuy: next.join('; ') };
+        });
+      }, []);
 
       const handleObjectInputChange = useCallback((e) => {
         const { name, value } = e.target;
@@ -7732,11 +7739,17 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               <div className="bb-tab-pane active">
                 <div className="form-row">
                   <div><label className="form-label">Loại ma túy</label>
-                    <select name="loaiMaTuy" value={['Ma túy đá (MET)','Thuốc lắc (MDMA)','Ketamine (KET)','Heroin','Cần sa (TCH)','Nước biển (GHB)','Nước vui','Cỏ Mỹ','Khác'].includes(objectData.loaiMaTuy||'') || !objectData.loaiMaTuy ? (objectData.loaiMaTuy||'') : 'Khác'} onChange={handleObjectInputChange} className="form-control">
-                      <option value="">-- Chọn --</option>
-                      {['Ma túy đá (MET)','Thuốc lắc (MDMA)','Ketamine (KET)','Heroin','Cần sa (TCH)','Nước biển (GHB)','Nước vui','Cỏ Mỹ','Khác'].map(v=><option key={v} value={v}>{v}</option>)}
-                    </select>
-                    {objectData.loaiMaTuy === 'Khác' && <input type="text" name="loaiMaTuy" value={objectData.loaiMaTuyKhac||''} onChange={(e)=>handleObjectInputChange({target:{name:'loaiMaTuyKhac',value:e.target.value}})} className="form-control mt-1" placeholder="Nhập loại ma túy..." />}
+                    <div className="form-control" style={{height:'auto', display:'flex', flexWrap:'wrap', gap:'4px 14px', padding:'8px 10px'}}>
+                      {['Ma túy đá (MET)','Thuốc lắc (MDMA)','Ketamine (KET)','Heroin','Cần sa (TCH)','Nước biển (GHB)','Nước vui','Cỏ Mỹ','Etomidate','Khác'].map(v=>{
+                        const selected = (objectData.loaiMaTuy||'').split(';').map(s=>s.trim()).filter(Boolean).includes(v);
+                        return (
+                          <label key={v} style={{display:'flex',alignItems:'center',gap:'4px',fontWeight:'normal',fontSize:'13px',cursor:'pointer'}}>
+                            <input type="checkbox" checked={selected} onChange={()=>toggleLoaiMaTuy(v)} /> {v}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    {(objectData.loaiMaTuy||'').split(';').map(s=>s.trim()).filter(Boolean).includes('Khác') && <input type="text" value={objectData.loaiMaTuyKhac||''} onChange={(e)=>handleObjectInputChange({target:{name:'loaiMaTuyKhac',value:e.target.value}})} className="form-control mt-1" placeholder="Nhập loại ma túy..." />}
                   </div>
                   <div><label className="form-label">Hình thức sử dụng</label>
                     <select name="hinhThucSuDung" value={objectData.hinhThucSuDung||''} onChange={handleObjectInputChange} className="form-control">
@@ -8168,7 +8181,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
             extensionCount: 0, investigationConclusionDate: '', prosecutionDate: '',
             prosecutionDecision: '', penaltyDate: '', penaltyDecision: '',
             transferDate: '', receivingUnit: '', status: 'đang thực hiện',
-            reportDate: '', expirationDate: '', notes: '', objects: [],
+            reportDate: '', expirationDate: '', notes: '', caseSummary: '', objects: [],
             phanLoaiTin: '', noixayra: '', hinhThucXuLy: '', toQuanLy: '',
             ngayKetThuc: '', tinBaoKetQua: '', tinBaoNgayKetThuc: '',
             loaiToiPhamVu: '', ngayKhoiToVuAn: '', soQdKhoiToVuAn: '', ngayXphc: '', soQdXphcVu: ''
@@ -8713,6 +8726,18 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
               </div>}
             </div> {/* close KẾT QUẢ ĐIỀU TRA frame */}
             
+            <div className="col-span-2">
+              <label className={`form-label${caseData.caseSummary ? ' label-filled' : ''}`}>Tóm tắt vụ việc</label>
+              <textarea
+                name="caseSummary"
+                value={caseData.caseSummary || ''}
+                onChange={handleInputChange}
+                placeholder="Nhập tóm tắt vụ việc"
+                className="form-control"
+                readOnly={!isEditing}
+              />
+            </div>
+
             <div className="col-span-2">
               <label className={`form-label${caseData.notes ? ' label-filled' : ''}`}>Ghi chú</label>
               <textarea
@@ -10248,6 +10273,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
         reportDate: '',
         expirationDate: '',
         notes: '',
+        caseSummary: '',
         objects: [],
         noixayra: '',
         hinhThucXuLy: '',
@@ -12415,6 +12441,7 @@ const processPlaceholderTool = async (file, oldNum, newNum) => {
                             reportDate: '',
                             expirationDate: '',
                             notes: '',
+                            caseSummary: '',
                             objects: []
                           });
                         }}
