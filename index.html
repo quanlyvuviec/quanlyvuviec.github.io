@@ -2658,6 +2658,15 @@ const parseVietnameseBioText = (text) => {
     const line = raw;
     const ll = line.toLowerCase();
 
+    // ── Helper: cắt phần "Năm sinh"/"Sinh năm"/"Nghề nghiệp"/"Nơi ở" bị dính liền
+    // ngay sau tên khi cả tên và các nhãn tiếp theo nằm chung 1 dòng, ví dụ:
+    // "Họ tên cha: Nguyễn Văn A     Năm sinh cha: 1977"
+    // BUG CŨ: chỉ cắt ở "sinh " hoặc "nghề " (một từ) nên bị cắt SAI ở giữa cụm
+    // "Năm sinh" → còn sót lại chữ "Năm" dính vào tên. FIX: cắt theo CỤM 2 từ,
+    // hỗ trợ CẢ 2 thứ tự "năm sinh" và "sinh năm".
+    const stripTrailingLabel = (s) =>
+      s.split(/\s+(?:n[aă]m\s+sinh|sinh\s+n[aă]m|ngh[eề]\s+nghi[eệ]p|n[oơ]i\s+[oở])\b/i)[0].trim();
+
     // ── INLINE: Nơi ở hiện tại (cha)/(mẹ) ─────────────────────────────────────
     // Phải kiểm tra TRƯỚC các inline khác vì MAIN_KEYS có 'nơi ở hiện tại'
     // FIX: dùng (.+) thay vì ([^,;]+?) để lấy toàn bộ địa chỉ kể cả dấu phẩy
@@ -2676,20 +2685,29 @@ const parseVietnameseBioText = (text) => {
     if (/h[oọ]\s+(v[aà]\s+)?t[eê]n\s+cha/i.test(ll)) {
       const m = line.match(/h[oọ]\s+(?:v[aà]\s+)?t[eê]n\s+cha\s*[:\-]\s*(.+)/i);
       if (m && !data.chaTen) {
-        // Cắt nếu có "Sinh" hoặc "Nghề" ngay sau tên (trường hợp ghi một dòng)
-        data.chaTen = m[1].trim().split(/\s+(?:sinh\s|ngh[eề]\s)/i)[0].trim();
+        // Cắt nếu có "Năm sinh"/"Sinh năm"/"Nghề nghiệp"/"Nơi ở" ngay sau tên (ghi chung 1 dòng)
+        data.chaTen = stripTrailingLabel(m[1].trim());
+      }
+      // Cùng dòng còn có "Năm sinh cha:"/"Sinh năm cha:" → trích luôn, tránh mất dữ liệu
+      if (!data.chaSinhNam) {
+        const ym = line.match(/(?:n[aă]m\s+sinh|sinh\s+n[aă]m)\s+cha\s*[:\-]\s*(.+)/i);
+        if (ym) { const yr = ym[1].match(/(19|20)\d{2}/); data.chaSinhNam = yr ? yr[0] : ym[1].trim().replace(/[;,].*$/,'').trim(); }
       }
       parentMode = 'cha'; continue;
     }
     if (/h[oọ]\s+(v[aà]\s+)?t[eê]n\s+m[eẹ]/i.test(ll)) {
       const m = line.match(/h[oọ]\s+(?:v[aà]\s+)?t[eê]n\s+m[eẹ]\s*[:\-]\s*(.+)/i);
       if (m && !data.meTen) {
-        data.meTen = m[1].trim().split(/\s+(?:sinh\s|ngh[eề]\s)/i)[0].trim();
+        data.meTen = stripTrailingLabel(m[1].trim());
+      }
+      if (!data.meSinhNam) {
+        const ym = line.match(/(?:n[aă]m\s+sinh|sinh\s+n[aă]m)\s+m[eẹ]\s*[:\-]\s*(.+)/i);
+        if (ym) { const yr = ym[1].match(/(19|20)\d{2}/); data.meSinhNam = yr ? yr[0] : ym[1].trim().replace(/[;,].*$/,'').trim(); }
       }
       parentMode = 'me'; continue;
     }
 
-    // ── INLINE: Sinh năm / Nghề nghiệp (cha)/(mẹ) ────────────────────────────
+    // ── INLINE: Sinh năm / Nghề nghiệp (cha)/(mẹ) — có dấu ngoặc đơn ─────────
     if (/sinh\s+n[aă]m\s*\(cha\)/i.test(ll) && !data.chaSinhNam) {
       const m = line.match(/sinh\s+n[aă]m\s*\(cha\)\s*[:\-]\s*(.+)/i);
       if (m) { const yr = m[1].match(/(19|20)\d{2}/); data.chaSinhNam = yr ? yr[0] : m[1].trim(); }
@@ -2711,6 +2729,42 @@ const parseVietnameseBioText = (text) => {
       parentMode = 'me'; continue;
     }
 
+    // ── INLINE: Nghề nghiệp / Nơi ở (hiện tại) / Năm sinh, sinh cha/mẹ — KHÔNG
+    // dấu ngoặc đơn, "cha"/"mẹ" viết liền sau nhãn (ví dụ "Nghề nghiệp cha:",
+    // "Nơi ở hiện tại cha:", "Năm sinh cha:"). ĐÂY LÀ FIX CHÍNH cho lỗi bị dính
+    // chữ "cha:"/"mẹ:" vào đầu giá trị (do trước đây rơi xuống nhánh chung
+    // "Nghề nghiệp"/"Nơi ở" bên dưới, vốn không biết bỏ qua chữ "cha"/"mẹ").
+    if (/ngh[eề]\s+nghi[eệ]p\s+cha\b/i.test(ll) && !data.chaNgheNghiep) {
+      const m = line.match(/ngh[eề]\s+nghi[eệ]p\s+cha\s*[:\-]\s*(.+)/i);
+      if (m) data.chaNgheNghiep = m[1].trim();
+      parentMode = 'cha'; continue;
+    }
+    if (/ngh[eề]\s+nghi[eệ]p\s+m[eẹ](?=[\s:\-]|$)/i.test(ll) && !data.meNgheNghiep) {
+      const m = line.match(/ngh[eề]\s+nghi[eệ]p\s+m[eẹ]\s*[:\-]\s*(.+)/i);
+      if (m) data.meNgheNghiep = m[1].trim();
+      parentMode = 'me'; continue;
+    }
+    if (/n[oơ]i\s+[oở][^(]*\bcha\b/i.test(ll) && !data.chaNoiO) {
+      const m = line.match(/n[oơ]i\s+[oở][^(]*\bcha\s*[:\-]\s*(.+)/i);
+      if (m) data.chaNoiO = m[1].trim();
+      parentMode = 'cha'; continue;
+    }
+    if (/n[oơ]i\s+[oở][^(]*\bm[eẹ](?=[\s:\-]|$)/i.test(ll) && !data.meNoiO) {
+      const m = line.match(/n[oơ]i\s+[oở][^(]*\bm[eẹ]\s*[:\-]\s*(.+)/i);
+      if (m) data.meNoiO = m[1].trim();
+      parentMode = 'me'; continue;
+    }
+    if (/(?:n[aă]m\s+sinh|sinh\s+n[aă]m)\s+cha\b/i.test(ll) && !data.chaSinhNam) {
+      const m = line.match(/(?:n[aă]m\s+sinh|sinh\s+n[aă]m)\s+cha\s*[:\-]\s*(.+)/i);
+      if (m) { const yr = m[1].match(/(19|20)\d{2}/); data.chaSinhNam = yr ? yr[0] : m[1].trim(); }
+      parentMode = 'cha'; continue;
+    }
+    if (/(?:n[aă]m\s+sinh|sinh\s+n[aă]m)\s+m[eẹ](?=[\s:\-]|$)/i.test(ll) && !data.meSinhNam) {
+      const m = line.match(/(?:n[aă]m\s+sinh|sinh\s+n[aă]m)\s+m[eẹ]\s*[:\-]\s*(.+)/i);
+      if (m) { const yr = m[1].match(/(19|20)\d{2}/); data.meSinhNam = yr ? yr[0] : m[1].trim(); }
+      parentMode = 'me'; continue;
+    }
+
     // ── BLOCK: "Cha: tên" hoặc "Cha" đứng một mình = họ tên cha ─────────────
     // NEW: "Cha" (không có các từ khoá khác) được hiểu là "Họ tên cha"
     if (/^cha\s*[:\-]?\s*/i.test(ll) && !/ngh[eề]|sinh\s+n[aă]m|n[oơ]i\s+[oở]/i.test(ll)) {
@@ -2727,7 +2781,8 @@ const parseVietnameseBioText = (text) => {
       continue;
     }
 
-    // ── INSIDE Cha/Mẹ block ───────────────────────────────────────────────────
+    // ── INSIDE Cha/Mẹ block (fallback cho định dạng bare "Nghề nghiệp:"/"Nơi ở:"
+    // không kèm chữ "cha"/"mẹ" — ví dụ khi "Cha:" đứng riêng một dòng ở trên) ──
     // FIX: kiểm tra từng field CỤ THỂ TRƯỚC resetParent để không bị reset sai
     if (parentMode === 'cha') {
       // Trường hợp đặc biệt: gặp "Họ tên mẹ" → chuyển sang mẹ
@@ -2741,10 +2796,10 @@ const parseVietnameseBioText = (text) => {
         const v = afterKey(line,'Nghề nghiệp');
         if (v && !data.chaNgheNghiep) data.chaNgheNghiep = v; continue;
       }
-      else if (/sinh\s+n[aă]m/i.test(ll)) {
-        const yr = ll.match(/(19|20)\d{2}/);
-        if (yr && !data.chaSinhNam) data.chaSinhNam = yr[0];
-        else if (!data.chaSinhNam) { const vv = afterKey(line,'Sinh năm'); if (vv) data.chaSinhNam = vv.replace(/[;,].*$/,'').trim(); }
+      else if (/sinh\s+n[aă]m|n[aă]m\s+sinh/i.test(ll)) {
+        const vv = afterKey(line,'Sinh năm','Năm sinh');
+        if (vv) { const yr = vv.match(/(19|20)\d{2}/); data.chaSinhNam = data.chaSinhNam || (yr ? yr[0] : vv.replace(/[;,].*$/,'').trim()); }
+        else { const yr = ll.match(/(19|20)\d{2}/); if (yr && !data.chaSinhNam) data.chaSinhNam = yr[0]; }
         continue;
       }
       else if (resetParent(ll)) { parentMode = null; }
@@ -2762,10 +2817,10 @@ const parseVietnameseBioText = (text) => {
         const v = afterKey(line,'Nghề nghiệp');
         if (v && !data.meNgheNghiep) data.meNgheNghiep = v; continue;
       }
-      else if (/sinh\s+n[aă]m/i.test(ll)) {
-        const yr = ll.match(/(19|20)\d{2}/);
-        if (yr && !data.meSinhNam) data.meSinhNam = yr[0];
-        else if (!data.meSinhNam) { const vv = afterKey(line,'Sinh năm'); if (vv) data.meSinhNam = vv.replace(/[;,].*$/,'').trim(); }
+      else if (/sinh\s+n[aă]m|n[aă]m\s+sinh/i.test(ll)) {
+        const vv = afterKey(line,'Sinh năm','Năm sinh');
+        if (vv) { const yr = vv.match(/(19|20)\d{2}/); data.meSinhNam = data.meSinhNam || (yr ? yr[0] : vv.replace(/[;,].*$/,'').trim()); }
+        else { const yr = ll.match(/(19|20)\d{2}/); if (yr && !data.meSinhNam) data.meSinhNam = yr[0]; }
         continue;
       }
       else if (resetParent(ll)) { parentMode = null; }
@@ -3306,7 +3361,11 @@ const buildObjFields = (dt, prefix) => {
   fields[p+'qd_ktbc_so']        = fields[p+'so_qd_ktbc'];
   fields[p+'qd_ktbc_ngay']      = fields[p+'ngay_ktbc'];
   fields[p+'qd_ktbc_ngay_short']= fields[p+'ngay_ktbc_short'];
-  fields[p+'ghi_chu']           = fields[p+'ghi_chu_dt'];
+  // LƯU Ý: KHÔNG tạo alias "ghi_chu" (không tiền tố) → "ghi_chu_dt" vì nó ĐÈ LÊN
+  // tag {ghi_chu} cấp "Vụ việc" (caseObj.notes) khi xuất ở chế độ 1 đối tượng
+  // không tiền tố — đây chính là lỗi "{ghi_chu} xuất ra rỗng" đã gặp phải.
+  // Chỉ tạo alias này khi CÓ tiền tố (doituongN_ghi_chu), lúc đó không đụng độ.
+  if (prefix) fields[p+'ghi_chu'] = fields[p+'ghi_chu_dt'];
   fields[p+'m\u1EB9_ten']          = fields[p+'me_ten'];
   fields[p+'m\u1EB9_sinh_nam']     = fields[p+'me_sinh_nam'];
   fields[p+'m\u1EB9_nghe_nghiep']  = fields[p+'me_nghe_nghiep'];
